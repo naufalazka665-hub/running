@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lintasan Run Coach</title>
+<meta name="description" content="Perencana latihan dan pelatih lari berbasis sport science: VDOT, zona HR, periodisasi, readiness harian, dan analisis beban.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,700;0,800;1,700;1,800&family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand"><span class="brand-name">Lintasan</span><span class="brand-sub">Run coach berbasis sport science</span></div>
+    <nav class="tabs" role="tablist" aria-label="Bagian">
+      <button class="tab" role="tab" id="tab-today" data-view="today" aria-selected="true">Hari ini</button>
+      <button class="tab" role="tab" id="tab-plan" data-view="plan" aria-selected="false">Rencana</button>
+      <button class="tab" role="tab" id="tab-log" data-view="log" aria-selected="false">Log</button>
+      <button class="tab" role="tab" id="tab-profile" data-view="profile" aria-selected="false">Profil &amp; zona</button>
+      <button class="tab" role="tab" id="tab-library" data-view="library" aria-selected="false">Pustaka sains</button>
+    </nav>
+  </div>
+</header>
+<div class="lanes" aria-hidden="true"></div>
+
+<main>
+  <div id="sample-banner" class="banner" hidden>
+    <span>Anda sedang melihat <b>data contoh</b> (pelari 10K 55:00, target half marathon). Ganti dengan data Anda kapan saja.</span>
+    <button class="btn sm" id="clear-sample" type="button">Mulai dengan data saya</button>
+  </div>
+
+  <!-- ================= HARI INI ================= -->
+  <section class="view" id="view-today" role="tabpanel" aria-labelledby="tab-today">
+    <div class="view-head">
+      <div>
+        <p class="label" id="today-date"></p>
+        <h2>Sesi hari ini</h2>
+      </div>
+      <p class="muted small" id="today-week"></p>
+    </div>
+
+    <div class="today">
+      <article class="session" id="session-card"></article>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Cek kesiapan pagi</h3>
+          <span class="hint">±30 detik</span>
+        </div>
+        <form id="ready-form">
+          <div class="fields">
+            <label class="field"><span>Durasi tidur (jam)</span><input id="r-sleepH" type="number" min="0" max="14" step="0.5" value="7"></label>
+            <label class="field"><span>HR istirahat vs biasa (bpm)</span><input id="r-rhr" type="number" min="-20" max="40" step="1" value="0"></label>
+          </div>
+          <div class="scale"><div class="scale-top"><span>Kualitas tidur</span><b id="v-sleepQ">3</b></div><input id="r-sleepQ" type="range" min="1" max="5" value="3" aria-label="Kualitas tidur, 1 buruk sampai 5 sangat baik"></div>
+          <div class="scale"><div class="scale-top"><span>Kaki terasa (1 sangat pegal, 5 segar)</span><b id="v-sore">3</b></div><input id="r-sore" type="range" min="1" max="5" value="3" aria-label="Kesegaran otot"></div>
+          <div class="scale"><div class="scale-top"><span>Stres (1 sangat stres, 5 tenang)</span><b id="v-stress">3</b></div><input id="r-stress" type="range" min="1" max="5" value="3" aria-label="Tingkat ketenangan"></div>
+          <div class="scale"><div class="scale-top"><span>Mood &amp; motivasi</span><b id="v-mood">3</b></div><input id="r-mood" type="range" min="1" max="5" value="3" aria-label="Mood"></div>
+          <div class="field"><span>Nyeri</span>
+            <div class="seg" role="radiogroup" aria-label="Nyeri">
+              <label><input type="radio" name="r-pain" value="none" checked><span>Tidak ada</span></label>
+              <label><input type="radio" name="r-pain" value="mild"><span>Ringan, umum</span></label>
+              <label><input type="radio" name="r-pain" value="sharp"><span>Tajam / satu titik</span></label>
+            </div>
+          </div>
+          <div class="field"><span>Gejala sakit</span>
+            <div class="seg" role="radiogroup" aria-label="Gejala sakit">
+              <label><input type="radio" name="r-ill" value="none" checked><span>Sehat</span></label>
+              <label><input type="radio" name="r-ill" value="above"><span>Di atas leher (pilek)</span></label>
+              <label><input type="radio" name="r-ill" value="below"><span>Demam / di bawah leher</span></label>
+            </div>
+          </div>
+          <button class="btn" type="submit">Nilai kesiapan</button>
+        </form>
+        <div id="ready-result" hidden></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Analisis coach</h3>
+        <span class="hint">Dari log 28 hari terakhir</span>
+      </div>
+      <div class="tiles" id="metric-tiles"></div>
+      <div id="dist-block"></div>
+      <ul class="insights" id="insights"></ul>
+    </div>
+
+    <div class="panel" id="this-week-panel">
+      <div class="panel-head"><h3>Minggu ini</h3><span class="hint" id="this-week-meta"></span></div>
+      <div class="week" id="this-week"></div>
+      <div id="this-week-detail"></div>
+    </div>
+  </section>
+
+  <!-- ================= RENCANA ================= -->
+  <section class="view" id="view-plan" role="tabpanel" aria-labelledby="tab-plan" hidden>
+    <div class="view-head">
+      <div><p class="label">Periodisasi</p><h2>Rencana latihan</h2></div>
+      <p class="muted">Base → Build → Peak → Taper. Volume naik maks ~10% per minggu dengan minggu ringan tiap minggu ke-4, ±80% volume di intensitas rendah, dan taper yang menurunkan volume tanpa memotong intensitas.</p>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <h3>Buat rencana</h3>
+        <form id="plan-form">
+          <div class="fields">
+            <label class="field"><span>Target lomba</span>
+              <select id="p-goal"><option value="5k">5K</option><option value="10k">10K</option><option value="half">Half marathon</option><option value="marathon">Marathon</option></select>
+            </label>
+            <label class="field"><span>Tanggal lomba</span><input id="p-date" type="date" required></label>
+            <label class="field"><span>Durasi (minggu)</span><input id="p-weeks" type="number" min="4" max="24" value="12" required></label>
+            <label class="field"><span>Volume saat ini (km/minggu)</span><input id="p-km" type="number" min="5" max="200" value="25" required></label>
+            <label class="field"><span>Hari lari / minggu</span>
+              <select id="p-days"><option>3</option><option selected>4</option><option>5</option><option>6</option></select>
+            </label>
+            <label class="field"><span>Level</span>
+              <select id="p-level"><option value="beginner">Pemula</option><option value="intermediate" selected>Menengah</option><option value="advanced">Lanjut</option></select>
+            </label>
+            <label class="field"><span>Hari long run</span>
+              <select id="p-long"><option value="5">Sabtu</option><option value="6" selected>Minggu</option></select>
+            </label>
+          </div>
+          <p class="hint" id="plan-vdot-hint"></p>
+          <div class="row">
+            <button class="btn" type="submit">Susun rencana</button>
+            <button class="btn danger sm" type="button" id="plan-delete" hidden>Hapus rencana</button>
+          </div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Volume mingguan</h3><span class="hint" id="plan-summary"></span></div>
+        <div class="chart-wrap" id="plan-chart"></div>
+        <div class="legend">
+          <span><i style="background:var(--easy)"></i>Base</span>
+          <span><i style="background:var(--track)"></i>Build</span>
+          <span><i style="background:var(--mod)"></i>Peak</span>
+          <span><i style="background:var(--hard)"></i>Taper &amp; lomba</span>
+          <span><i style="background:var(--rest)"></i>Minggu ringan</span>
+        </div>
+      </div>
+    </div>
+    <div class="weeks" id="plan-weeks"></div>
+  </section>
+
+  <!-- ================= LOG ================= -->
+  <section class="view" id="view-log" role="tabpanel" aria-labelledby="tab-log" hidden>
+    <div class="view-head">
+      <div><p class="label">Session-RPE · Foster 2001</p><h2>Log latihan</h2></div>
+      <p class="muted">Beban sesi = menit × RPE (0–10). Isi RPE ±30 menit setelah lari, untuk keseluruhan sesi.</p>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <h3>Catat sesi</h3>
+        <form id="log-form">
+          <div class="fields">
+            <label class="field"><span>Tanggal</span><input id="l-date" type="date" required></label>
+            <label class="field"><span>Jenis</span>
+              <select id="l-type"><option value="E">Easy</option><option value="L">Long run</option><option value="Q">Kualitas (T/I/R)</option><option value="RACE">Lomba / time trial</option><option value="X">Cross-training</option></select>
+            </label>
+            <label class="field"><span>Jarak (km)</span><input id="l-km" type="number" min="0" step="0.1" required></label>
+            <label class="field"><span>Durasi (menit)</span><input id="l-min" type="number" min="1" step="1" required></label>
+            <label class="field"><span>HR rata-rata (opsional)</span><input id="l-hr" type="number" min="60" max="220"></label>
+          </div>
+          <div class="scale">
+            <div class="scale-top"><span>RPE sesi (CR-10)</span><b id="v-rpe">3</b></div>
+            <input id="l-rpe" type="range" min="0" max="10" value="3" aria-label="RPE sesi 0 sampai 10">
+            <p class="hint" id="rpe-desc"></p>
+          </div>
+          <label class="field"><span>Catatan</span><input id="l-notes" type="text" placeholder="Misal: panas, kaki kiri agak kaku"></label>
+          <button class="btn" type="submit">Simpan sesi</button>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Beban 8 minggu</h3><span class="hint">Batang: km/minggu · garis: beban (AU)</span></div>
+        <div class="chart-wrap" id="log-chart"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>Riwayat</h3><span class="hint" id="log-count"></span></div>
+      <div class="table-wrap"><table id="log-table"></table></div>
+    </div>
+  </section>
+
+  <!-- ================= PROFIL ================= -->
+  <section class="view" id="view-profile" role="tabpanel" aria-labelledby="tab-profile" hidden>
+    <div class="view-head">
+      <div><p class="label">VDOT · Karvonen · Riegel</p><h2>Profil &amp; zona</h2></div>
+      <p class="muted">Masukkan hasil lomba atau time trial terbaru (maks ~6 minggu lalu, dilakukan dengan usaha penuh). Semua pace latihan diturunkan dari sini.</p>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <h3>Data pelari</h3>
+        <form id="profile-form">
+          <div class="fields">
+            <label class="field"><span>Nama</span><input id="f-name" type="text" autocomplete="given-name"></label>
+            <label class="field"><span>Usia</span><input id="f-age" type="number" min="12" max="90" required></label>
+            <label class="field"><span>HR istirahat</span><input id="f-rest" type="number" min="30" max="100" required></label>
+            <label class="field"><span>HR maks terukur (opsional)</span><input id="f-max" type="number" min="120" max="230" placeholder="pakai rumus"></label>
+            <label class="field"><span>Jarak lomba terbaru</span>
+              <select id="f-dist"><option value="1500">1500 m</option><option value="mile">1 mil</option><option value="3k">3 km</option><option value="5k">5K</option><option value="10k" selected>10K</option><option value="15k">15K</option><option value="half">Half marathon</option><option value="marathon">Marathon</option></select>
+            </label>
+            <label class="field"><span>Waktu (h:mm:ss / mm:ss)</span><input id="f-time" type="text" inputmode="numeric" placeholder="55:00" required></label>
+          </div>
+          <button class="btn" type="submit">Hitung &amp; simpan</button>
+          <p class="hint" id="profile-msg"></p>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>VDOT Anda</h3><span class="hint">Daniels &amp; Gilbert</span></div>
+        <div id="vdot-block"></div>
+        <div class="table-wrap"><table id="pace-table"></table></div>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-head"><h3>Zona denyut jantung</h3><span class="hint" id="hr-meta"></span></div>
+        <div class="table-wrap"><table id="hr-table"></table></div>
+        <p class="hint">Karvonen: HR = HR istirahat + % × (HRmax − HR istirahat). Rumus usia meleset ±10 bpm; HRmax dari tes lapangan lebih baik.</p>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Prediksi lomba</h3><span class="hint">VDOT vs Riegel</span></div>
+        <div class="table-wrap"><table id="pred-table"></table></div>
+        <p class="hint">Prediksi ke jarak jauh (HM/marathon) mengasumsikan volume latihan memadai untuk jarak tersebut.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Data &amp; cadangan</h3>
+      <p class="muted small">Semua data tersimpan di browser ini saja (localStorage). Ekspor secara berkala bila ingin aman.</p>
+      <div class="row">
+        <button class="btn ghost sm" type="button" id="export-btn">Ekspor JSON</button>
+        <label class="btn ghost sm" for="import-file">Impor JSON</label>
+        <input id="import-file" type="file" accept="application/json" hidden>
+        <button class="btn danger sm" type="button" id="reset-btn">Hapus semua data</button>
+      </div>
+      <div id="reset-confirm" class="row" hidden>
+        <span class="small">Yakin hapus profil, rencana, dan seluruh log?</span>
+        <button class="btn danger sm" type="button" id="reset-yes">Ya, hapus</button>
+        <button class="btn ghost sm" type="button" id="reset-no">Batal</button>
+      </div>
+      <p class="hint" id="data-msg"></p>
+    </div>
+  </section>
+
+  <!-- ================= PUSTAKA ================= -->
+  <section class="view" id="view-library" role="tabpanel" aria-labelledby="tab-library" hidden>
+    <div class="view-head">
+      <div><p class="label">Basis pengetahuan coach</p><h2>Pustaka sains lari</h2></div>
+      <p class="muted">Ringkasan riset sport science yang menjadi dasar semua saran di aplikasi ini, lengkap dengan tingkat bukti dan referensi jurnal.</p>
+    </div>
+    <div class="panel">
+      <h3>Tanya coach</h3>
+      <form id="ask-form" class="ask">
+        <input id="ask-q" type="search" placeholder="Contoh: kenapa easy run harus pelan? berapa gel saat marathon?" aria-label="Pertanyaan">
+        <button class="btn" type="submit">Cari jawaban</button>
+      </form>
+      <div class="answer" id="answer"></div>
+    </div>
+    <div class="topics" id="topics"></div>
+  </section>
+
+  <p class="disclaimer">Lintasan adalah alat edukasi dan perencanaan, bukan pengganti dokter, fisioterapis, atau pelatih bersertifikat. Konsultasikan dengan tenaga medis bila Anda punya kondisi jantung, cedera, atau gejala yang mengkhawatirkan.</p>
+</main>
+
+<script src="js/science.js"></script>
+<script src="js/plan.js"></script>
+<script src="js/coach.js"></script>
+<script src="js/knowledge.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
