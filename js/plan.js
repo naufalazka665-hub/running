@@ -204,108 +204,173 @@
     return strides(round1(Math.max(4, wk * 0.12)), pc);
   }
 
+  /** Susun 7 hari untuk satu minggu. v: { km, cutback, taper }. */
+  function buildWeek(o, i, v, phase, weekInPhase, isRaceWeek) {
+    var goal = GOALS[o.goal];
+    var paces = o.vdot ? S.trainingPaces(o.vdot) : null;
+    var shift = ((o.longDay - 6) % 7 + 7) % 7;
+    var pattern = PATTERNS[o.days];
+    var weekKm = round1(v.km);
+    var ctx = { phase: phase, goal: o.goal, weekKm: weekKm, paces: paces, weekInPhase: weekInPhase, cutback: v.cutback };
+    var days = [];
+    for (var d = 0; d < 7; d++) days.push({ dow: d, type: 'R', title: 'Istirahat', desc: 'Istirahat total atau mobilitas/jalan ringan. Adaptasi terjadi saat pemulihan.', km: 0, hardKm: 0 });
+
+    // HM & marathon butuh long run relatif lebih panjang (tetap dibatasi longCap & ~42% volume)
+    var frac = Math.min(0.42, LONG_FRAC[o.days] + (o.goal === 'marathon' ? 0.1 : o.goal === 'half' ? 0.04 : 0));
+    var longKm = round1(Math.min(goal.longCap, weekKm * frac));
+    if (phase === 'taper') longKm = round1(Math.min(longKm, weekKm * 0.3));
+    var slots = Object.keys(pattern).map(Number);
+    var used = 0;
+    var assigned = {};
+    slots.forEach(function (s) {
+      var role = pattern[s];
+      var dow = (s + shift) % 7;
+      var sess;
+      if (role === 'L') sess = longRun(longKm, phase, o.goal, paces, weekInPhase);
+      else if (role === 'Q' || role === 'Q2') sess = qualitySession(role, ctx);
+      else return;
+      // sesi kualitas pada program 3 hari: hanya satu, bergantian T / I saat build-peak
+      if (o.days === 3 && role === 'Q' && (phase === 'build' || phase === 'peak') && weekInPhase % 2 === 1 && !v.cutback) {
+        sess = qualitySession('Q2', ctx);
+      }
+      assigned[dow] = sess;
+      used += sess.km;
+    });
+    var easySlots = slots.filter(function (s) { return pattern[s] === 'E'; });
+    var remaining = Math.max(0, weekKm - used);
+    easySlots.forEach(function (s) {
+      // easy run tidak boleh menyaingi long run; lebih baik volume sedikit di bawah target
+      var km = round1(Math.max(3, Math.min(remaining / easySlots.length, Math.max(longKm * 0.7, 5))));
+      assigned[(s + shift) % 7] = (phase === 'base' && s === 0) ? strides(km, paces) : easyRun(km, paces);
+    });
+
+    Object.keys(assigned).forEach(function (dow) {
+      days[dow] = Object.assign({ dow: Number(dow) }, assigned[dow]);
+    });
+
+    if (isRaceWeek) {
+      // hari lomba: sesuai tanggal lomba bila diketahui, kalau tidak di hari long run
+      var raceDow = o.raceDate ? (new Date(o.raceDate + 'T12:00:00').getDay() + 6) % 7 : (6 + shift) % 7;
+      if (raceDow !== (6 + shift) % 7) {
+        // long run minggu ini dipindah ke easy pendek; lomba menggantikan sesi di hari lomba
+        var lr = (6 + shift) % 7;
+        if (days[lr].type === 'L') days[lr] = Object.assign({ dow: lr }, easyRun(round1(Math.max(3, days[lr].km * 0.4)), paces));
+      }
+      days[raceDow] = { dow: raceDow, type: 'RACE', title: 'HARI LOMBA ' + goal.label, km: Math.round(goal.m / 100) / 10, hardKm: goal.m / 1000,
+        desc: 'Pemanasan 10–15 mnt (lebih singkat untuk HM/M). Mulai sedikit konservatif, target even/negative split' + (paces ? ' sekitar ' + S.fmtPace(paces[o.goal === 'half' ? 'HM' : o.goal === 'marathon' ? 'M' : o.goal === '10k' ? '10K' : '5K'].pace) + '/km' : '') + '.' };
+      if (raceDow >= 2) days[raceDow - 2] = Object.assign({ dow: raceDow - 2 }, strides(4, paces), { title: 'Shakeout + strides' });
+      if (raceDow >= 1) days[raceDow - 1] = { dow: raceDow - 1, type: 'R', title: 'Istirahat / jog 15 mnt', desc: 'Karbohidrat cukup, tidur awal, siapkan perlengkapan.', km: 0, hardKm: 0 };
+      days.forEach(function (dd) {
+        var gap = raceDow - dd.dow;
+        // tidak ada sesi kualitas 3 hari sebelum lomba
+        if (dd.type === 'Q' && gap > 0 && gap < 4) Object.assign(dd, easyRun(round1(Math.max(3, dd.km * 0.6)), paces));
+        // setelah lomba: pemulihan
+        if (gap < 0) Object.assign(dd, { type: 'R', title: 'Pemulihan pasca-lomba', desc: 'Istirahat atau jalan santai. Kembali lari easy setelah nyeri otot reda.', km: 0, hardKm: 0, zone: null, rpe: null });
+      });
+    }
+
+    // volume kecil (mis. setelah penyesuaian turun): sesi minimum bisa melebihi target jauh.
+    // Hapus easy run terpendek (bukan kualitas/long) selama total >120% target, minimal 3 hari lari.
+    var sumKm = function () { return days.reduce(function (a, d) { return a + d.km; }, 0); };
+    while (!isRaceWeek && sumKm() > weekKm * 1.2) {
+      var runs = days.filter(function (d) { return d.km > 0; });
+      var easies = runs.filter(function (d) { return d.type === 'E'; }).sort(function (x, y) { return x.km - y.km; });
+      if (runs.length <= 3 || !easies.length) break;
+      var drop = easies[0];
+      days[drop.dow] = { dow: drop.dow, type: 'R', title: 'Istirahat', desc: 'Hari lari diganti istirahat karena volume minggu ini diturunkan.', km: 0, hardKm: 0 };
+    }
+
+    var total = sumKm();
+    var hard = days.reduce(function (a, d) { return a + (d.type === 'RACE' ? 0 : d.hardKm); }, 0);
+    var start = o.startDate ? S.addDays(o.startDate, i * 7) : null;
+    return {
+      index: i + 1,
+      phase: phase,
+      weekInPhase: weekInPhase,
+      cutback: v.cutback,
+      targetKm: weekKm,
+      totalKm: round1(total),
+      hardPct: total > 0 ? Math.round(hard / total * 100) : 0,
+      start: start ? S.dayKey(start) : null,
+      days: days.map(function (d) { return Object.assign({ date: start ? S.dayKey(S.addDays(start, d.dow)) : null }, d); })
+    };
+  }
+
   /**
    * Buat rencana.
-   * opts: { goal, weeks, currentKm, days (3–6), level, vdot, longDay (0=Sen..6=Min), startDate (Senin minggu 1) }
+   * opts: { goal, weeks, currentKm, days (3–6), level, vdot, longDay (0=Sen..6=Min), startDate (Senin minggu 1), raceDate }
    */
   function generatePlan(opts) {
     var o = Object.assign({ goal: '10k', weeks: 12, currentKm: 20, days: 4, level: 'beginner', vdot: null, longDay: 6 }, opts);
     o.weeks = Math.max(4, Math.min(24, Math.round(o.weeks)));
     o.days = Math.max(3, Math.min(6, Math.round(o.days)));
-    var goal = GOALS[o.goal];
-    var paces = o.vdot ? S.trainingPaces(o.vdot) : null;
     var curve = volumeCurve(o);
-    var shift = ((o.longDay - 6) % 7 + 7) % 7;
-    var pattern = PATTERNS[o.days];
     var phaseCount = {};
-    var weeks = [];
-
-    curve.vols.forEach(function (v, i) {
+    var weeks = curve.vols.map(function (v, i) {
       var phase = v.taper ? 'taper' : phaseOf(i, curve.nTrain);
-      phaseCount[phase] = (phaseCount[phase] || 0);
-      var weekInPhase = phaseCount[phase]++;
-      var isRaceWeek = i === curve.vols.length - 1;
-      var weekKm = round1(v.km);
-      var ctx = { phase: phase, goal: o.goal, weekKm: weekKm, paces: paces, weekInPhase: weekInPhase, cutback: v.cutback };
-      var days = [];
-      for (var d = 0; d < 7; d++) days.push({ dow: d, type: 'R', title: 'Istirahat', desc: 'Istirahat total atau mobilitas/jalan ringan. Adaptasi terjadi saat pemulihan.', km: 0, hardKm: 0 });
-
-      // Long run
-      // HM & marathon butuh long run relatif lebih panjang (tetap dibatasi longCap & ~42% volume)
-      var frac = Math.min(0.42, LONG_FRAC[o.days] + (o.goal === 'marathon' ? 0.1 : o.goal === 'half' ? 0.04 : 0));
-      var longKm = round1(Math.min(goal.longCap, weekKm * frac));
-      if (phase === 'taper') longKm = round1(Math.min(longKm, weekKm * 0.3));
-      var slots = Object.keys(pattern).map(Number);
-      var used = 0;
-      var assigned = {};
-      slots.forEach(function (s) {
-        var role = pattern[s];
-        var dow = (s + shift) % 7;
-        var sess;
-        if (role === 'L') sess = longRun(longKm, phase, o.goal, paces, weekInPhase);
-        else if (role === 'Q' || role === 'Q2') sess = qualitySession(role, ctx);
-        else return;
-        // sesi kualitas pada program 3 hari: hanya satu, bergantian T / I saat build-peak
-        if (o.days === 3 && role === 'Q' && (phase === 'build' || phase === 'peak') && weekInPhase % 2 === 1 && !v.cutback) {
-          sess = qualitySession('Q2', ctx);
-        }
-        assigned[dow] = sess;
-        used += sess.km;
-      });
-      var easySlots = slots.filter(function (s) { return pattern[s] === 'E'; });
-      var remaining = Math.max(0, weekKm - used);
-      easySlots.forEach(function (s) {
-        // easy run tidak boleh menyaingi long run; lebih baik volume sedikit di bawah target
-        var km = round1(Math.max(3, Math.min(remaining / easySlots.length, Math.max(longKm * 0.7, 5))));
-        assigned[(s + shift) % 7] = (phase === 'base' && s === 0) ? strides(km, paces) : easyRun(km, paces);
-      });
-
-      Object.keys(assigned).forEach(function (dow) {
-        days[dow] = Object.assign({ dow: Number(dow) }, assigned[dow]);
-      });
-
-      if (isRaceWeek) {
-        // hari lomba: sesuai tanggal lomba bila diketahui, kalau tidak di hari long run
-        var raceDow = o.raceDate ? (new Date(o.raceDate + 'T12:00:00').getDay() + 6) % 7 : (6 + shift) % 7;
-        if (raceDow !== (6 + shift) % 7) {
-          // long run minggu ini dipindah ke easy pendek; lomba menggantikan sesi di hari lomba
-          var lr = (6 + shift) % 7;
-          if (days[lr].type === 'L') days[lr] = Object.assign({ dow: lr }, easyRun(round1(Math.max(3, days[lr].km * 0.4)), paces));
-        }
-        days[raceDow] = { dow: raceDow, type: 'RACE', title: 'HARI LOMBA ' + goal.label, km: Math.round(goal.m / 100) / 10, hardKm: goal.m / 1000,
-          desc: 'Pemanasan 10–15 mnt (lebih singkat untuk HM/M). Mulai sedikit konservatif, target even/negative split' + (paces ? ' sekitar ' + S.fmtPace(paces[o.goal === 'half' ? 'HM' : o.goal === 'marathon' ? 'M' : o.goal === '10k' ? '10K' : '5K'].pace) + '/km' : '') + '.' };
-        if (raceDow >= 2) days[raceDow - 2] = Object.assign({ dow: raceDow - 2 }, strides(4, paces), { title: 'Shakeout + strides' });
-        if (raceDow >= 1) days[raceDow - 1] = { dow: raceDow - 1, type: 'R', title: 'Istirahat / jog 15 mnt', desc: 'Karbohidrat cukup, tidur awal, siapkan perlengkapan.', km: 0, hardKm: 0 };
-        days.forEach(function (dd) {
-          var gap = raceDow - dd.dow;
-          // tidak ada sesi kualitas 3 hari sebelum lomba
-          if (dd.type === 'Q' && gap > 0 && gap < 4) Object.assign(dd, easyRun(round1(Math.max(3, dd.km * 0.6)), paces));
-          // setelah lomba: pemulihan
-          if (gap < 0) Object.assign(dd, { type: 'R', title: 'Pemulihan pasca-lomba', desc: 'Istirahat atau jalan santai. Kembali lari easy setelah nyeri otot reda.', km: 0, hardKm: 0, zone: null, rpe: null });
-        });
-      }
-
-      var total = days.reduce(function (a, d) { return a + d.km; }, 0);
-      var hard = days.reduce(function (a, d) { return a + (d.type === 'RACE' ? 0 : d.hardKm); }, 0);
-      var start = o.startDate ? S.addDays(o.startDate, i * 7) : null;
-      weeks.push({
-        index: i + 1,
-        phase: phase,
-        cutback: v.cutback,
-        targetKm: weekKm,
-        totalKm: round1(total),
-        hardPct: total > 0 ? Math.round(hard / total * 100) : 0,
-        start: start ? S.dayKey(start) : null,
-        days: days.map(function (d) { return Object.assign({ date: start ? S.dayKey(S.addDays(start, d.dow)) : null }, d); })
-      });
+      phaseCount[phase] = phaseCount[phase] || 0;
+      return buildWeek(o, i, v, phase, phaseCount[phase]++, i === curve.vols.length - 1);
     });
-
     return {
       createdAt: new Date().toISOString(),
       opts: o,
       peakKm: round1(curve.peakKm),
-      weeks: weeks
+      weeks: weeks,
+      reviews: {},
+      adaptations: []
     };
+  }
+
+  /**
+   * Rencana adaptif: susun ulang minggu ke-`fromIdx` (0-based) dan seterusnya.
+   * Minggu yang sudah lewat tidak disentuh. Fase & minggu ringan dipertahankan;
+   * volume dihitung ulang dari `startKm` (volume minggu `fromIdx`) dengan progresi ≤10%/minggu
+   * menuju puncak semula, lalu taper proporsional dari puncak baru.
+   * changes: { startKm?, vdot? }
+   */
+  function adaptPlan(plan, fromIdx, changes) {
+    var o = Object.assign({}, plan.opts);
+    if (changes.vdot) o.vdot = changes.vdot;
+    if (o.startDate && !(o.startDate instanceof Date)) o.startDate = new Date(o.startDate + 'T12:00:00');
+    var goal = GOALS[o.goal];
+    var target = Math.max(Math.max(10, o.currentKm), goal.peak[o.level]);
+    var weeks = plan.weeks.slice(0, fromIdx);
+    var rest = plan.weeks.slice(fromIdx);
+    var taperIdx = rest.map(function (w) { return w.phase; }).indexOf('taper');
+    var running = changes.startKm !== undefined ? changes.startKm : (rest[0] ? rest[0].targetKm : 0);
+    var first = true;
+    var lastBuild = fromIdx > 0 ? plan.weeks[fromIdx - 1].targetKm : running;
+    var taperN = rest.filter(function (w) { return w.phase === 'taper'; }).length;
+    var factors = TAPER_FACTORS[Math.min(3, Math.max(1, plan.weeks.filter(function (w) { return w.phase === 'taper'; }).length))];
+    var taperOffset = factors.length - taperN; // taper yang sudah berjalan sebagian
+    var peak = null;
+
+    rest.forEach(function (w, k) {
+      var i = fromIdx + k;
+      var v;
+      if (w.phase === 'taper') {
+        if (peak === null) {
+          // puncak = minggu non-taper terakhir (yang sudah lewat atau baru disusun)
+          var prev = weeks.slice().reverse().find(function (x) { return x.phase !== 'taper' && !x.cutback; });
+          peak = prev ? prev.targetKm : running;
+          if (first && changes.startKm !== undefined) peak = Math.min(peak, changes.startKm / factors[taperOffset]);
+        }
+        v = { km: peak * factors[taperOffset + (k - taperIdx)], cutback: false, taper: true };
+      } else if (w.cutback) {
+        v = { km: (first ? running : lastBuild) * (first ? 1 : 0.8), cutback: true };
+      } else {
+        if (!first) running = Math.min(target, lastBuild * 1.1);
+        lastBuild = running;
+        v = { km: running, cutback: false };
+      }
+      if (!w.cutback && w.phase !== 'taper') lastBuild = v.km;
+      first = false;
+      weeks.push(buildWeek(o, i, v, w.phase, w.weekInPhase || 0, i === plan.weeks.length - 1));
+    });
+
+    var o2 = Object.assign({}, plan.opts, { vdot: o.vdot });
+    var peakKm = Math.max.apply(null, weeks.map(function (w) { return w.phase === 'taper' ? 0 : w.targetKm; }));
+    return Object.assign({}, plan, { opts: o2, weeks: weeks, peakKm: round1(peakKm) });
   }
 
   /** Senin dari minggu yang berisi tanggal d. */
@@ -326,6 +391,8 @@
     GOALS: GOALS,
     DAY_NAMES: DAY_NAMES,
     generatePlan: generatePlan,
+    adaptPlan: adaptPlan,
+    buildWeek: buildWeek,
     volumeCurve: volumeCurve,
     mondayOf: mondayOf,
     startForRace: startForRace

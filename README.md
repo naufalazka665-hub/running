@@ -12,6 +12,18 @@ Website statis (HTML/CSS/JS murni, tanpa build dan tanpa server) untuk **merenca
 | **Profil & zona** | VDOT, pace E/M/T/I/R, zona HR Karvonen, prediksi lomba (VDOT & Riegel) | Daniels & Gilbert 1979, Tanaka 2001, Karvonen 1957, Riegel 1981 |
 | **Pustaka sains** | 15 topik (fisiologi, 80/20, taper, cedera, kekuatan, nutrisi, panas tropis, pacing, dll.) dengan tingkat bukti & referensi jurnal, plus pencarian "Tanya coach" | lihat `js/knowledge.js` |
 
+### Rencana adaptif (update otomatis tiap minggu)
+Semua data tersimpan otomatis (indikator "Tersimpan otomatis" di kanan atas). Saat Anda membuka aplikasi di minggu baru, coach me-review minggu sebelumnya lalu menyusun ulang minggu ini dan sisa rencana:
+
+| Kondisi minggu lalu | Keputusan | Minggu ini |
+|---|---|---|
+| Kepatuhan ≥85%, RPE easy ≤4, readiness baik | **Lanjut** | sesuai rencana |
+| Kepatuhan 60–85%, RPE easy ≥5, ≥3 hari kuning, atau sempat sakit | **Tahan** | min(rencana, maks(km terlaksana, 85% target)) |
+| Kepatuhan <60%, ≥2 hari merah, atau nyeri tajam | **Turunkan** | min(rencana, maks(km terlaksana, 60% target) × 1,1) |
+| Lomba/time trial tercatat dengan waktu lebih cepat | **VDOT naik** | semua pace diperbarui |
+
+Sisa rencana dihitung ulang dari volume baru (naik maks 10%/minggu, fase & minggu ringan tetap, tanggal lomba tetap). Minggu yang sudah lewat tidak diubah. Bila Anda baru mencatat sesi minggu lalu setelah review berjalan, review diulang otomatis. Program tiap minggu bisa disalin sebagai teks (catatan/WhatsApp).
+
 ### Aturan coach yang diterapkan
 - Volume naik maks ~10%/minggu, minggu ringan (−20%) tiap minggu ke-4.
 - Sesi keras dibatasi: T ≤10%, I ≤8%, R ≤5% volume mingguan (Daniels).
@@ -27,7 +39,7 @@ Buka `index.html` langsung di browser, atau:
 
 ```bash
 npm start            # http://localhost:8080
-npm test             # 18 unit test (rumus VDOT vs tabel Daniels, generator rencana, coach, pustaka)
+npm test             # 27 unit test (rumus VDOT vs tabel Daniels, generator rencana, rencana adaptif, coach, pustaka)
 ```
 
 Bisa di-deploy apa adanya ke GitHub Pages (Settings → Pages → branch, folder root).

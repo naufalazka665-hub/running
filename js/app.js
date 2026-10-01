@@ -30,8 +30,35 @@
   // ---------- State ----------
   var state;
 
-  function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* storage diblokir: tetap jalan di memori */ }
+  var saveOk = true;
+  function save(msg) {
+    try {
+      state.savedAt = new Date().toISOString();
+      localStorage.setItem(KEY, JSON.stringify(state));
+      saveOk = true;
+    } catch (e) {
+      saveOk = false; // storage diblokir: tetap jalan di memori
+    }
+    renderSaveState();
+    if (msg) toast(saveOk ? msg : 'Browser ini memblokir penyimpanan. Gunakan Ekspor JSON agar data tidak hilang.');
+  }
+
+  function renderSaveState() {
+    var el = $('save-state');
+    if (!el) return;
+    if (state.sample) { el.textContent = 'Data contoh, belum disimpan'; return; }
+    if (!saveOk) { el.textContent = 'Tidak tersimpan: penyimpanan browser diblokir'; return; }
+    var t = state.savedAt ? new Date(state.savedAt) : null;
+    el.textContent = t ? 'Tersimpan otomatis · ' + t.getDate() + ' ' + MONTHS[t.getMonth()] + ', ' + ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) : 'Tersimpan otomatis di perangkat ini';
+  }
+
+  var toastTimer;
+  function toast(msg) {
+    var el = $('toast');
+    el.textContent = msg;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.hidden = true; }, 3500);
   }
   function load() {
     try {
@@ -42,6 +69,7 @@
   }
 
   function profileVdot(p) {
+    if (p && p.vdotOverride) return p.vdotOverride; // dari lomba/time trial yang tercatat di log
     if (!p || !p.time || !p.dist) return null;
     var sec = S.parseTime(p.time);
     var d = S.DISTANCES[p.dist];
@@ -73,7 +101,10 @@
         logs.push({ id: uid(), date: d.date, type: d.type, km: km, minutes: Math.round(km * pace / 60), rpe: rpe, hr: null, notes: d.title });
       });
     });
-    return { profile: profile, plan: plan, logs: logs, readiness: {}, sample: true };
+    // anggap rencana dibuat di awal minggu 1 supaya review mingguan contoh bisa ditampilkan
+    plan.createdAt = plan.opts.startDate + 'T06:00:00';
+    var st = { profile: profile, plan: plan, logs: logs, readiness: {}, sample: true };
+    return st;
   }
 
   function emptyState() { return { profile: null, plan: null, logs: [], readiness: {}, sample: false }; }
@@ -136,6 +167,130 @@
     });
   }
 
+  // ---------- REVIEW MINGGUAN (rencana adaptif) ----------
+  function weekIdxOf(key) {
+    if (!state.plan) return -1;
+    return state.plan.weeks.findIndex(function (w) { return w.days[0].date <= key && w.days[6].date >= key; });
+  }
+
+  /**
+   * Saat minggu baru dimulai: review minggu lalu sekali, lalu sesuaikan minggu ini & sisanya.
+   * Minggu yang dimulai sebelum rencana dibuat tidak direview (datanya tidak adil).
+   */
+  function runWeeklyReview(force) {
+    var plan = state.plan;
+    if (!plan) return null;
+    plan.reviews = plan.reviews || {};
+    plan.adaptations = plan.adaptations || [];
+    var cur = weekIdxOf(TODAY);
+    if (cur <= 0) return null;
+    var prevIdx = cur - 1;
+    var prev = plan.weeks[prevIdx];
+    var created = S.dayKey(plan.createdAt || TODAY);
+    if (prev.days[0].date < created) return null;
+    var key = String(prev.index);
+    if (plan.reviews[key] && !force) return null;
+
+    // review ulang: kembalikan dulu kondisi sebelum penyesuaian sebelumnya
+    var snap = plan.snapshot;
+    if (plan.reviews[key] && snap && snap.week === prev.index) {
+      plan.weeks = plan.weeks.slice(0, cur).concat(snap.weeks);
+      plan.peakKm = snap.peakKm;
+      if (state.profile) state.profile.vdotOverride = snap.vdotOverride || null;
+      plan.adaptations = plan.adaptations.filter(function (a) { return a.afterWeek !== prev.index; });
+    }
+
+    var vdNow = profileVdot(state.profile);
+    var rv = C.weeklyReview(plan, state.logs, state.readiness, prevIdx, vdNow);
+    plan.snapshot = { week: prev.index, weeks: JSON.parse(JSON.stringify(plan.weeks.slice(cur))), peakKm: plan.peakKm, vdotOverride: state.profile ? state.profile.vdotOverride || null : null };
+
+    var changes = {};
+    var curWeek = plan.weeks[cur];
+    if (rv.nextKm !== null && Math.abs(rv.nextKm - curWeek.targetKm) >= 0.5) changes.startKm = rv.nextKm;
+    if (rv.newVdot) {
+      changes.vdot = rv.newVdot;
+      state.profile = Object.assign({}, state.profile || {}, { vdotOverride: rv.newVdot });
+    }
+    if (changes.startKm !== undefined || changes.vdot) {
+      var before = curWeek.targetKm;
+      state.plan = plan = Object.assign(P.adaptPlan(plan, cur, changes), { reviews: plan.reviews, adaptations: plan.adaptations, snapshot: plan.snapshot, createdAt: plan.createdAt });
+      plan.adaptations.push({ date: TODAY, afterWeek: prev.index, week: plan.weeks[cur].index, decision: rv.decision, fromKm: before, toKm: plan.weeks[cur].targetKm, vdot: rv.newVdot || null });
+    }
+    rv.appliedKm = plan.weeks[cur].targetKm;
+    plan.reviews[key] = rv;
+    return rv;
+  }
+
+  function latestReview() {
+    if (!state.plan || !state.plan.reviews) return null;
+    var keys = Object.keys(state.plan.reviews).map(Number).sort(function (a, b) { return b - a; });
+    return keys.length ? state.plan.reviews[keys[0]] : null;
+  }
+
+  var DECISION = {
+    progress: ['green', 'Lanjut sesuai rencana'],
+    hold: ['amber', 'Tahan progresi'],
+    reduce: ['red', 'Turunkan beban']
+  };
+
+  function renderReview() {
+    var box = $('review-panel');
+    var rv = latestReview();
+    if (!rv) { box.hidden = true; return; }
+    box.hidden = false;
+    var d = DECISION[rv.decision];
+    var cur = weekIdxOf(TODAY);
+    var stale = cur < 0 || state.plan.weeks[cur].index !== rv.nextWeek;
+    $('review-title').textContent = 'Laporan minggu ' + rv.week + ' · ' + fmtDate(rv.from) + '–' + fmtDate(rv.to);
+    var tiles = [
+      ['Volume', num(rv.doneKm) + ' / ' + num(rv.plannedKm) + ' km', Math.round(rv.compliance * 100) + '% terlaksana'],
+      ['Sesi lari', rv.sessionsDone + ' / ' + rv.sessionsPlanned, 'hari dengan lari tercatat'],
+      ['Sesi kualitas', rv.qualityDone + ' / ' + rv.qualityPlanned, 'threshold, interval, race pace'],
+      ['RPE easy', rv.easyRpe === null ? '–' : num(rv.easyRpe), 'target ≤ 4'],
+      ['Hari merah / kuning', rv.redDays + ' / ' + rv.amberDays, 'dari cek kesiapan pagi']
+    ];
+    var change = '';
+    if (rv.nextWeek) {
+      change = rv.appliedKm !== rv.nextPlannedKm
+        ? 'Minggu ' + rv.nextWeek + ' disesuaikan: <b class="mono">' + num(rv.nextPlannedKm) + ' → ' + num(rv.appliedKm) + ' km</b>. Sisa rencana dihitung ulang dari angka ini, naik maks 10%/minggu.'
+        : 'Minggu ' + rv.nextWeek + ' tetap <b class="mono">' + num(rv.appliedKm) + ' km</b> sesuai rencana.';
+    }
+    $('review-body').innerHTML =
+      '<div class="row"><span class="pill ' + d[0] + '">' + d[1] + '</span>' + (rv.newVdot ? '<span class="pill blue">VDOT baru ' + num(rv.newVdot) + '</span>' : '') + '</div>' +
+      '<div class="tiles">' + tiles.map(function (t) { return '<div class="tile"><span class="label">' + t[0] + '</span><b>' + t[1] + '</b><span class="small">' + t[2] + '</span></div>'; }).join('') + '</div>' +
+      '<ul class="insights">' + rv.reasons.map(function (r) { return '<li class="insight ' + (rv.decision === 'reduce' ? 'alert' : rv.decision === 'hold' ? 'warn' : 'good') + '">' + esc(r) + '</li>'; }).join('') + '</ul>' +
+      (change ? '<p>' + change + '</p>' : '') +
+      (stale ? '' : '<div class="row"><button type="button" class="btn ghost sm" id="review-rerun">Review ulang</button><span class="hint">Pakai ini bila Anda baru mencatat sesi minggu lalu.</span></div>');
+    var rb = $('review-rerun');
+    if (rb) rb.addEventListener('click', function () { runWeeklyReview(true); save('Review diperbarui dan rencana disesuaikan.'); renderAll(); });
+  }
+
+  /** Teks program satu minggu, siap disalin ke catatan/WhatsApp. */
+  function weekText(w) {
+    var o = state.plan.opts;
+    var lines = ['Program lari minggu ' + w.index + '/' + state.plan.weeks.length + ' (' + PHASE_LABEL[w.phase] + (w.cutback ? ', minggu ringan' : '') + ') · target ' + P.GOALS[o.goal].label + ' ' + (o.raceDate ? fmtDate(o.raceDate, true) : ''),
+      'Total ' + num(w.totalKm) + ' km', ''];
+    w.days.forEach(function (d) {
+      lines.push(DAYS_LONG[(d.dow + 1) % 7] + ' ' + fmtDate(d.date) + ': ' + d.title + (d.km ? ' (' + num(d.km) + ' km)' : ''));
+      if (d.type !== 'R') lines.push('   ' + d.desc);
+    });
+    return lines.join('\n');
+  }
+
+  function copyWeek(w, btn) {
+    var txt = weekText(w);
+    var done = function () { toast('Program minggu ' + w.index + ' disalin.'); };
+    var fallback = function () {
+      var ta = $('copy-fallback');
+      ta.hidden = false; ta.value = txt; ta.focus(); ta.select();
+      toast('Salin manual: teks sudah dipilih.');
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fallback);
+      else fallback();
+    } catch (e) { fallback(); }
+  }
+
   // ---------- HARI INI ----------
   function renderToday() {
     $('today-date').textContent = fmtDate(TODAY, true);
@@ -178,6 +333,7 @@
       res.hidden = true;
     }
 
+    renderReview();
     renderAnalysis();
     renderThisWeek();
   }
@@ -200,7 +356,7 @@
       tiles.innerHTML = [
         ['Jarak 7 hari', num(m.km7) + ' km', ch === null ? 'minggu lalu –' : (ch >= 0 ? '+' : '') + ch + '% vs 7 hari sebelumnya'],
         ['Beban 7 hari', Math.round(m.load7) + ' AU', 'menit × RPE'],
-        ['Rasio akut:kronis', m.acwr === null ? '–' : num(m.acwr, 2), 'nyaman ±0,8–1,3'],
+        ['Rasio akut:kronis', m.acwr === null ? '–' : num(m.acwr, 2), m.acwr === null ? 'butuh data ≥3 minggu' : 'nyaman ±0,8–1,3'],
         ['Monotony', isFinite(m.monotony) ? num(m.monotony, 2) : '–', '> 2 = terlalu seragam'],
         ['Hari istirahat', String(m.restDays), 'dalam 7 hari terakhir']
       ].map(function (t) { return '<div class="tile"><span class="label">' + t[0] + '</span><b>' + t[1] + '</b><span class="small">' + t[2] + '</span></div>'; }).join('');
@@ -228,6 +384,7 @@
     var comp = C.compliance(state.plan, state.logs, new Date());
     $('this-week-meta').textContent = (comp ? num(comp.doneKm) + ' / ' + num(comp.plannedKm) + ' km' : '') + ' · ' + w.hardPct + '% volume intensitas tinggi';
     $('this-week').innerHTML = w.days.map(function (d) { return dayCell(d, { week: wi }); }).join('');
+    $('copy-week').onclick = function () { copyWeek(w); };
     $('this-week-detail').innerHTML = dayDetail(hit.day);
   }
 
@@ -283,6 +440,11 @@
     var pl = state.plan;
     $('plan-chart').innerHTML = planChart();
     $('plan-summary').textContent = P.GOALS[pl.opts.goal].label + ' · ' + pl.weeks.length + ' minggu · puncak ' + num(pl.peakKm) + ' km';
+    var ad = (pl.adaptations || []).slice().reverse();
+    $('adapt-list').innerHTML = ad.length ? ad.map(function (a) {
+      var d = DECISION[a.decision];
+      return '<li class="row"><span class="mono small">' + fmtDate(a.date) + '</span><span class="pill ' + d[0] + '">' + d[1] + '</span><span>Minggu ' + a.week + ': <span class="mono">' + num(a.fromKm) + ' → ' + num(a.toKm) + ' km</span>' + (a.vdot ? ' · VDOT ' + num(a.vdot) : '') + '</span></li>';
+    }).join('') : '<li class="muted small">' + (Object.keys(pl.reviews || {}).length ? 'Semua minggu yang sudah direview berjalan sesuai rencana, jadi volume belum perlu diubah.' : 'Belum ada penyesuaian. Review pertama berjalan otomatis saat minggu berikutnya dimulai.') + '</li>';
     wrap.innerHTML = pl.weeks.map(function (w, wi) {
       var cur = w.days[0].date <= TODAY && w.days[6].date >= TODAY;
       return '<article class="wk' + (cur ? ' current' : '') + '" id="wk-' + w.index + '">' +
@@ -290,11 +452,14 @@
         '<span class="pill ' + (w.phase === 'taper' ? 'red' : w.phase === 'peak' ? 'amber' : w.phase === 'build' ? 'blue' : 'green') + '">' + PHASE_LABEL[w.phase] + '</span>' +
         (w.cutback ? '<span class="pill grey">Minggu ringan</span>' : '') +
         (cur ? '<span class="pill blue">Minggu ini</span>' : '') +
-        '<span class="mono">' + (w.days[0].date ? fmtDate(w.days[0].date) + '–' + fmtDate(w.days[6].date) + ' · ' : '') + num(w.totalKm) + ' km · ' + w.hardPct + '% keras</span></div>' +
+        '<span class="mono">' + (w.days[0].date ? fmtDate(w.days[0].date) + '–' + fmtDate(w.days[6].date) + ' · ' : '') + num(w.totalKm) + ' km · ' + w.hardPct + '% keras</span>' +
+        (pl.reviews && pl.reviews[String(w.index)] ? '<span class="pill ' + DECISION[pl.reviews[String(w.index)].decision][0] + '">Direview · ' + Math.round(pl.reviews[String(w.index)].compliance * 100) + '%</span>' : '') +
+        '<button type="button" class="btn ghost sm wk-copy" data-copy="' + wi + '">Salin program</button></div>' +
         '<div class="week" data-wi="' + wi + '">' + w.days.map(function (d) { return dayCell(d, { week: wi }); }).join('') + '</div>' +
         '<div class="wk-detail"></div></article>';
     }).join('');
     wrap.querySelectorAll('.wk').forEach(function (el) { bindWeek(el.querySelector('.week'), el.querySelector('.wk-detail')); });
+    wrap.querySelectorAll('[data-copy]').forEach(function (b) { b.addEventListener('click', function () { copyWeek(pl.weeks[Number(b.dataset.copy)]); }); });
   }
 
   function onPlanSubmit(e) {
@@ -311,7 +476,7 @@
     plan.opts.startDate = S.dayKey(opts.startDate);
     state.plan = plan;
     leaveSample();
-    save();
+    save('Rencana tersimpan. Program akan ditinjau & disesuaikan otomatis tiap awal minggu.');
     renderAll();
     var curEl = document.querySelector('.wk.current');
     if (curEl) curEl.scrollIntoView({ block: 'start' });
@@ -393,13 +558,24 @@
 
   function onLogSubmit(e) {
     e.preventDefault();
+    var sec = S.parseTime($('l-time').value);
+    var minutes = sec ? Math.round(sec / 6) / 10 : Number($('l-min').value);
+    if (!(minutes > 0)) { toast('Isi durasi (menit) atau waktu tepat.'); return; }
+    var date = $('l-date').value;
     state.logs.push({
-      id: uid(), date: $('l-date').value, type: $('l-type').value, km: Number($('l-km').value), minutes: Number($('l-min').value),
+      id: uid(), date: date, type: $('l-type').value, km: Number($('l-km').value), minutes: minutes, seconds: sec || null,
       rpe: Number($('l-rpe').value), hr: $('l-hr').value ? Number($('l-hr').value) : null, notes: $('l-notes').value.trim()
     });
     leaveSample();
-    save();
-    $('l-km').value = ''; $('l-min').value = ''; $('l-hr').value = ''; $('l-notes').value = '';
+    var msg = 'Sesi tersimpan.';
+    // sesi terlambat dicatat untuk minggu yang sudah direview: review ulang otomatis
+    var wi = weekIdxOf(date);
+    if (state.plan && wi >= 0 && state.plan.reviews && state.plan.reviews[String(state.plan.weeks[wi].index)] && wi === weekIdxOf(TODAY) - 1) {
+      runWeeklyReview(true);
+      msg = 'Sesi tersimpan. Review minggu ' + state.plan.weeks[wi].index + ' diperbarui.';
+    }
+    save(msg);
+    $('l-km').value = ''; $('l-min').value = ''; $('l-time').value = ''; $('l-hr').value = ''; $('l-notes').value = '';
     renderAll();
   }
 
@@ -418,7 +594,7 @@
       return;
     }
     var pc = S.trainingPaces(vd);
-    $('vdot-block').innerHTML = '<div class="score"><b>' + num(vd) + '</b><span class="muted">VDOT dari ' + esc(S.DISTANCES[p.dist].label) + ' ' + esc(p.time) + '</span></div>';
+    $('vdot-block').innerHTML = '<div class="score"><b>' + num(vd) + '</b><span class="muted">' + (p.vdotOverride ? 'VDOT dari lomba/time trial di log (otomatis)' : 'VDOT dari ' + esc(S.DISTANCES[p.dist].label) + ' ' + esc(p.time)) + '</span></div>';
     var per400 = function (secKm) { return S.fmtTime(secKm * 0.4); };
     $('pace-table').innerHTML = '<thead><tr><th>Zona</th><th class="num">Pace /km</th><th class="num">/400 m</th><th>Tujuan</th></tr></thead><tbody>' + [
       ['E · Easy', S.fmtPace(pc.E.fast) + '–' + S.fmtPace(pc.E.slow), '–', 'Fondasi aerobik, pemulihan, long run'],
@@ -460,14 +636,13 @@
     state.profile = p;
     leaveSample();
     // perbarui pace di rencana yang ada tanpa mengubah strukturnya
+    // hanya minggu ini dan seterusnya; minggu yang sudah lewat & penyesuaian sebelumnya tetap
     if (state.plan) {
-      var o = Object.assign({}, state.plan.opts, { vdot: vd, startDate: new Date(state.plan.opts.startDate + 'T12:00:00') });
-      var np = P.generatePlan(o);
-      np.opts.startDate = state.plan.opts.startDate;
-      np.opts.raceDate = state.plan.opts.raceDate;
-      state.plan = np;
+      var from = Math.max(0, weekIdxOf(TODAY));
+      if (TODAY > state.plan.weeks[state.plan.weeks.length - 1].days[6].date) from = state.plan.weeks.length;
+      if (from < state.plan.weeks.length) state.plan = Object.assign({}, state.plan, P.adaptPlan(state.plan, from, { vdot: vd }), { reviews: state.plan.reviews, adaptations: state.plan.adaptations, snapshot: state.plan.snapshot, createdAt: state.plan.createdAt });
     }
-    save();
+    save('Profil tersimpan.');
     $('profile-msg').textContent = 'Tersimpan. VDOT ' + num(vd) + (state.plan ? '; pace di rencana sudah diperbarui.' : '.');
     renderAll();
   }
@@ -540,6 +715,7 @@
   // ---------- Init ----------
   function renderAll() {
     $('sample-banner').hidden = !state.sample;
+    renderSaveState();
     renderToday();
     renderPlan();
     renderLog();
@@ -548,6 +724,8 @@
 
   function init() {
     state = load() || sampleState();
+    // awal minggu baru: review minggu lalu & sesuaikan rencana
+    if (runWeeklyReview(false) && !state.sample) save('Minggu baru: program minggu ini sudah disesuaikan dengan latihan Anda minggu lalu.');
 
     document.querySelectorAll('.tab').forEach(function (t) { t.addEventListener('click', function () { show(t.dataset.view); }); });
     document.addEventListener('click', function (e) {
@@ -567,7 +745,7 @@
         pain: document.querySelector('input[name="r-pain"]:checked').value,
         illness: document.querySelector('input[name="r-ill"]:checked').value
       };
-      save(); renderToday();
+      save('Cek kesiapan tersimpan.'); renderToday();
     });
     [['r-sleepQ', 'v-sleepQ'], ['r-sore', 'v-sore'], ['r-stress', 'v-stress'], ['r-mood', 'v-mood']].forEach(function (x) {
       $(x[0]).addEventListener('input', function () { $(x[1]).textContent = $(x[0]).value; });
@@ -582,7 +760,7 @@
       var b = e.target.closest('[data-del]');
       if (!b) return;
       state.logs = state.logs.filter(function (l) { return l.id !== b.dataset.del; });
-      save(); renderAll();
+      save('Sesi dihapus.'); renderAll();
     });
     $('profile-form').addEventListener('submit', onProfileSubmit);
     $('ask-form').addEventListener('submit', onAsk);

@@ -250,3 +250,17 @@ td.num, th.num { text-align: right; }
   .view { animation: in 0.25s ease-out; }
   @keyframes in { from { transform: translateY(6px); opacity: 0.6; } to { transform: none; opacity: 1; } }
 }
+
+/* ---------- Simpan & review ---------- */
+.save-state { font-size: 0.8rem; color: var(--muted); justify-self: end; margin: -12px 0 -8px; }
+.save-state::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--easy); margin-right: 6px; }
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 20;
+  background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-weight: 600; font-size: 0.92rem;
+  max-width: calc(100% - 32px); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+.review { border-color: var(--track); }
+#review-body { display: grid; gap: 14px; }
+.adapt-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.wk-copy { margin-left: auto; }
+#copy-fallback { font: 0.85rem/1.5 var(--f-mono); }

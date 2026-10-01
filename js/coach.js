@@ -162,7 +162,7 @@
 
     return {
       insights: insights,
-      metrics: { km7: km0, kmPrev: km1, load7: ms.weekly, monotony: ms.monotony, strain: ms.strain, acwr: ac.ratio, chronic: ac.chronic, dist: dist, restDays: restDays }
+      metrics: { km7: km0, kmPrev: km1, load7: ms.weekly, monotony: ms.monotony, strain: ms.strain, acwr: spanDays >= 21 ? ac.ratio : null, chronic: ac.chronic, dist: dist, restDays: restDays }
     };
   }
 
@@ -178,7 +178,93 @@
     return { week: wk, plannedKm: wk.totalKm, doneKm: done, pct: wk.totalKm > 0 ? done / wk.totalKm : 0 };
   }
 
-  var api = { readiness: readiness, adjustSession: adjustSession, analyze: analyze, compliance: compliance, weekKm: weekKm };
+  /**
+   * Review satu minggu rencana yang sudah selesai dan tentukan penyesuaian minggu berikutnya.
+   * Aturan:
+   * - TURUNKAN bila kepatuhan <60%, ≥2 hari readiness merah, atau ada nyeri tajam:
+   *   minggu depan = min(rencana, maks(km terlaksana, 60% rencana minggu ini) × 1,1).
+   * - TAHAN bila kepatuhan 60–85%, RPE easy rata-rata ≥5, atau ≥3 hari amber:
+   *   minggu depan = min(rencana, maks(km terlaksana, 85% rencana minggu ini)), progresi ditunda.
+   * - LANJUT bila kepatuhan ≥85% dan tubuh merespons baik: sesuai rencana.
+   * Minggu ringan & taper tidak dinaikkan; hanya bisa diturunkan.
+   * Lomba/time trial yang tercatat dengan waktu → VDOT baru (hanya dinaikkan otomatis).
+   */
+  function weeklyReview(plan, logs, readinessMap, weekIdx, currentVdot) {
+    var w = plan.weeks[weekIdx];
+    var next = plan.weeks[weekIdx + 1] || null;
+    var a = w.days[0].date, b = w.days[6].date;
+    var wl = (logs || []).filter(function (l) { return l.date >= a && l.date <= b; });
+    var planned = w.days.filter(function (d) { return d.type !== 'R' && d.type !== 'RACE'; });
+    var plannedKm = planned.reduce(function (s, d) { return s + d.km; }, 0);
+    var doneKm = wl.reduce(function (s, l) { return s + (Number(l.km) || 0); }, 0);
+    var compliance = plannedKm > 0 ? doneKm / plannedKm : 1;
+    var doneDays = {};
+    wl.forEach(function (l) { doneDays[l.date] = true; });
+    var qualityPlanned = planned.filter(function (d) { return d.type === 'Q'; }).length;
+    var qualityDone = wl.filter(function (l) { return l.type === 'Q'; }).length;
+    var easyLogs = wl.filter(function (l) { return l.type === 'E' || l.type === 'L'; });
+    var easyRpe = easyLogs.length ? S.mean(easyLogs.map(function (l) { return Number(l.rpe) || 0; })) : null;
+
+    var red = 0, amber = 0, pain = 0, ill = 0;
+    Object.keys(readinessMap || {}).forEach(function (k) {
+      if (k < a || k > b) return;
+      var r = readiness(readinessMap[k]);
+      if (r.level === 'red') red++; else if (r.level === 'amber') amber++;
+      if (readinessMap[k].pain === 'sharp') pain++;
+      if (readinessMap[k].illness === 'below') ill++;
+    });
+
+    // VDOT dari lomba / time trial terbaik minggu ini (minimal 3 km)
+    var raceVdot = null;
+    wl.forEach(function (l) {
+      if (l.type !== 'RACE' || !(l.km >= 3)) return;
+      var sec = l.seconds || l.minutes * 60;
+      var v = S.vdot(l.km * 1000, sec);
+      if (v && (!raceVdot || v > raceVdot)) raceVdot = v;
+    });
+
+    var reasons = [];
+    var decision = 'progress';
+    if (compliance < 0.6) { decision = 'reduce'; reasons.push('Hanya ' + Math.round(compliance * 100) + '% volume terlaksana (' + doneKm.toFixed(1) + ' dari ' + plannedKm.toFixed(1) + ' km). Kembali ke beban yang terbukti bisa Anda jalani, lalu naik lagi bertahap.'); }
+    if (red >= 2) { decision = 'reduce'; reasons.push(red + ' hari readiness merah. Tubuh belum pulih; beban diturunkan.'); }
+    if (pain > 0) { decision = 'reduce'; reasons.push('Tercatat nyeri tajam. Volume diturunkan; bila nyeri menetap >3 hari, periksakan.'); }
+    if (ill > 0 && decision !== 'reduce') { decision = 'hold'; reasons.push('Sempat sakit (gejala di bawah leher). Progresi ditunda satu minggu.'); }
+    if (decision === 'progress') {
+      if (compliance < 0.85) { decision = 'hold'; reasons.push('Kepatuhan ' + Math.round(compliance * 100) + '%. Ulangi beban minggu ini sebelum naik.'); }
+      if (easyRpe !== null && easyRpe >= 5) { decision = 'hold'; reasons.push('RPE rata-rata easy/long run ' + easyRpe.toFixed(1) + ' (target ≤4). Tanda lelah atau easy run terlalu cepat.'); }
+      if (amber >= 3) { decision = 'hold'; reasons.push(amber + ' hari readiness kuning. Progresi ditunda.'); }
+    }
+    if (decision === 'progress') {
+      reasons.push('Kepatuhan ' + Math.round(compliance * 100) + '% dan respons tubuh baik. Lanjut sesuai rencana.');
+      if (compliance > 1.15) reasons.push('Anda berlari ' + Math.round((compliance - 1) * 100) + '% di atas rencana. Lebih banyak tidak selalu lebih baik; ikuti target agar progresi tetap aman.');
+    }
+    if (qualityPlanned > 0 && qualityDone === 0 && plannedKm > 0) reasons.push('Sesi kualitas minggu ini tidak tercatat. Jangan digandakan minggu depan; lanjutkan saja jadwalnya.');
+
+    var nextKm = null;
+    if (next) {
+      nextKm = next.targetKm;
+      if (decision === 'reduce') nextKm = Math.min(next.targetKm, Math.max(doneKm, plannedKm * 0.6) * 1.1);
+      else if (decision === 'hold' && !next.cutback && next.phase !== 'taper') nextKm = Math.min(next.targetKm, Math.max(doneKm, plannedKm * 0.85));
+      nextKm = Math.round(Math.max(8, nextKm) * 2) / 2;
+    }
+
+    var newVdot = null;
+    if (raceVdot) {
+      if (!currentVdot || raceVdot > currentVdot + 0.3) { newVdot = raceVdot; reasons.push('Hasil lomba/time trial menunjukkan VDOT ' + raceVdot.toFixed(1) + (currentVdot ? ' (naik dari ' + currentVdot.toFixed(1) + ')' : '') + '. Pace latihan diperbarui.'); }
+      else if (raceVdot < currentVdot - 1) reasons.push('Hasil lomba di bawah VDOT Anda (' + raceVdot.toFixed(1) + ' vs ' + currentVdot.toFixed(1) + '). Pace tidak diturunkan otomatis: satu lomba buruk sering karena panas, medan, atau kelelahan.');
+    }
+
+    return {
+      week: w.index, from: a, to: b, plannedKm: plannedKm, doneKm: doneKm, compliance: compliance,
+      sessionsPlanned: planned.length, sessionsDone: Object.keys(doneDays).length,
+      qualityPlanned: qualityPlanned, qualityDone: qualityDone, easyRpe: easyRpe,
+      redDays: red, amberDays: amber, decision: decision, reasons: reasons,
+      nextWeek: next ? next.index : null, nextPlannedKm: next ? next.targetKm : null, nextKm: nextKm, newVdot: newVdot,
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  var api = { readiness: readiness, adjustSession: adjustSession, analyze: analyze, compliance: compliance, weekKm: weekKm, weeklyReview: weeklyReview };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Coach = api;
 })(this);

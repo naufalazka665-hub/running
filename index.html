@@ -26,6 +26,7 @@
 <div class="lanes" aria-hidden="true"></div>
 
 <main>
+  <p class="save-state" id="save-state" aria-live="polite"></p>
   <div id="sample-banner" class="banner" hidden>
     <span>Anda sedang melihat <b>data contoh</b> (pelari 10K 55:00, target half marathon). Ganti dengan data Anda kapan saja.</span>
     <button class="btn sm" id="clear-sample" type="button">Mulai dengan data saya</button>
@@ -39,6 +40,14 @@
         <h2>Sesi hari ini</h2>
       </div>
       <p class="muted small" id="today-week"></p>
+    </div>
+
+    <div class="panel review" id="review-panel" hidden>
+      <div class="panel-head">
+        <h3 id="review-title">Laporan mingguan</h3>
+        <span class="hint">Review otomatis tiap awal minggu</span>
+      </div>
+      <div id="review-body"></div>
     </div>
 
     <div class="today">
@@ -89,9 +98,11 @@
     </div>
 
     <div class="panel" id="this-week-panel">
-      <div class="panel-head"><h3>Minggu ini</h3><span class="hint" id="this-week-meta"></span></div>
+      <div class="panel-head"><h3>Program minggu ini</h3><span class="hint" id="this-week-meta"></span></div>
       <div class="week" id="this-week"></div>
       <div id="this-week-detail"></div>
+      <div class="row"><button type="button" class="btn ghost sm" id="copy-week">Salin program minggu ini</button><span class="hint">Untuk catatan, kalender, atau WhatsApp.</span></div>
+      <textarea id="copy-fallback" rows="8" readonly hidden aria-label="Teks program minggu ini"></textarea>
     </div>
   </section>
 
@@ -141,6 +152,10 @@
         </div>
       </div>
     </div>
+    <div class="panel">
+      <div class="panel-head"><h3>Riwayat penyesuaian</h3><span class="hint">Rencana adaptif: minggu lalu menentukan minggu ini</span></div>
+      <ul class="adapt-list" id="adapt-list"></ul>
+    </div>
     <div class="weeks" id="plan-weeks"></div>
   </section>
 
@@ -160,7 +175,8 @@
               <select id="l-type"><option value="E">Easy</option><option value="L">Long run</option><option value="Q">Kualitas (T/I/R)</option><option value="RACE">Lomba / time trial</option><option value="X">Cross-training</option></select>
             </label>
             <label class="field"><span>Jarak (km)</span><input id="l-km" type="number" min="0" step="0.1" required></label>
-            <label class="field"><span>Durasi (menit)</span><input id="l-min" type="number" min="1" step="1" required></label>
+            <label class="field"><span>Durasi (menit)</span><input id="l-min" type="number" min="1" step="1"></label>
+            <label class="field"><span>Atau waktu tepat (h:mm:ss)</span><input id="l-time" type="text" inputmode="numeric" placeholder="untuk lomba / time trial"></label>
             <label class="field"><span>HR rata-rata (opsional)</span><input id="l-hr" type="number" min="60" max="220"></label>
           </div>
           <div class="scale">
@@ -260,6 +276,7 @@
     <div class="topics" id="topics"></div>
   </section>
 
+  <p class="toast" id="toast" role="status" hidden></p>
   <p class="disclaimer">Lintasan adalah alat edukasi dan perencanaan, bukan pengganti dokter, fisioterapis, atau pelatih bersertifikat. Konsultasikan dengan tenaga medis bila Anda punya kondisi jantung, cedera, atau gejala yang mengkhawatirkan.</p>
 </main>
 
