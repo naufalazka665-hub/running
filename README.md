@@ -45,12 +45,14 @@ Pelari bisa membuat akun (email + password) agar profil, rencana, log, dan cek k
 - **Keamanan:** setiap pelari hanya bisa membaca & menulis datanya sendiri (Row Level Security di database). Password dikelola Supabase Auth, tidak pernah disimpan oleh Lintasan.
 - Token Strava sengaja **tidak** ikut ke akun (tetap per perangkat), karena berisi Client Secret.
 
-**Setup (sekali, ±10 menit, gratis):**
+**Status:** sudah aktif di proyek Supabase `lintasan` (`hybqzlactjhnsxldrsxz`, region Singapore). Skema & RLS sudah diterapkan dan diuji; `js/config.js` sudah terisi.
+
+**Setup untuk proyek baru (sekali, ±10 menit, gratis):**
 1. Buat proyek di <https://supabase.com> → *New project* (pilih region Singapore untuk Indonesia).
 2. *SQL Editor* → tempel isi [`supabase/schema.sql`](supabase/schema.sql) → *Run*.
 3. *Authentication → URL Configuration*: isi *Site URL* dengan `https://naufalazka665-hub.github.io/running/`, lalu tambahkan URL yang sama (dan `http://localhost:8080/` untuk uji lokal) di *Redirect URLs*.
 4. *Authentication → Sign In / Providers → Email*: pastikan aktif. "Confirm email" disarankan tetap aktif.
-5. *Project Settings → API*: salin **Project URL** dan **anon public key** ke `js/config.js`, lalu commit. Anon key memang publik; **jangan** pernah memakai `service_role` key di sini.
+5. *Project Settings → API Keys*: salin **Project URL** dan **publishable key** (`sb_publishable_…`, atau anon key lama) ke `js/config.js`, lalu commit. Key ini memang publik; **jangan** pernah memakai `service_role`/secret key di sini.
 
 Catatan: layanan email bawaan Supabase dibatasi beberapa email per jam. Kalau pengguna sudah banyak, pasang SMTP sendiri (*Authentication → SMTP Settings*). Nama menu di dashboard Supabase bisa sedikit berbeda antar versi.
 
