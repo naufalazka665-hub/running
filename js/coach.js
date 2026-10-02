@@ -254,7 +254,25 @@
       else if (raceVdot < currentVdot - 1) reasons.push('Hasil lomba di bawah VDOT Anda (' + raceVdot.toFixed(1) + ' vs ' + currentVdot.toFixed(1) + '). Pace tidak diturunkan otomatis: satu lomba buruk sering karena panas, medan, atau kelelahan.');
     }
 
+    // Hari lari aktual vs rencana: minggu depan mengikuti hari yang benar-benar dipakai pelari
+    var schedule = null;
+    var P = (typeof module !== 'undefined' && module.exports) ? require('./plan.js') : root.Plan;
+    var act = P.actualRunDays(w, logs);
+    if (act) {
+      var cur = P.planRunDays(plan.opts);
+      var curLong = cur.indexOf(plan.opts.longDay) >= 0 ? plan.opts.longDay : cur[cur.length - 1];
+      var sameDays = act.runDays.join(',') === cur.join(',');
+      if (!sameDays || act.longDay !== curLong) {
+        var NAMES = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+        var fmt = function (ds) { return ds.map(function (d) { return NAMES[d]; }).join(', '); };
+        schedule = { from: cur, to: act.runDays, fromLong: curLong, toLong: act.longDay };
+        reasons.push('Anda lari di hari ' + fmt(act.runDays) + ' (jadwal: ' + fmt(cur) + '). Mulai minggu ini program mengikuti hari Anda' +
+          (act.longDay !== curLong ? ', dengan long run hari ' + NAMES[act.longDay] : '') + '. Ubah kapan saja di tab Rencana.');
+      }
+    }
+
     return {
+      schedule: schedule,
       week: w.index, from: a, to: b, plannedKm: plannedKm, doneKm: doneKm, compliance: compliance,
       sessionsPlanned: planned.length, sessionsDone: Object.keys(doneDays).length,
       qualityPlanned: qualityPlanned, qualityDone: qualityDone, easyRpe: easyRpe,

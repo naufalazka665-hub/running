@@ -385,6 +385,12 @@
   function adaptPlan(plan, fromIdx, changes) {
     var o = Object.assign({}, plan.opts);
     if (changes.vdot) o.vdot = changes.vdot;
+    if (changes.runDays) {
+      o.runDays = changes.runDays.slice().sort(function (a, b) { return a - b; });
+      o.days = o.runDays.length;
+      o.longDay = changes.longDay !== undefined && o.runDays.indexOf(changes.longDay) >= 0 ? changes.longDay
+        : o.runDays.indexOf(o.longDay) >= 0 ? o.longDay : o.runDays[o.runDays.length - 1];
+    }
     if (o.startDate && !(o.startDate instanceof Date)) o.startDate = new Date(o.startDate + 'T12:00:00');
     var goal = GOALS[o.goal];
     var target = Math.max(Math.max(10, o.currentKm), goal.peak[o.level]);
@@ -422,9 +428,42 @@
       weeks.push(buildWeek(o, i, v, w.phase, w.weekInPhase || 0, i === plan.weeks.length - 1));
     });
 
-    var o2 = Object.assign({}, plan.opts, { vdot: o.vdot });
+    var o2 = Object.assign({}, plan.opts, { vdot: o.vdot, runDays: o.runDays || plan.opts.runDays, days: o.days, longDay: o.longDay });
     var peakKm = Math.max.apply(null, weeks.map(function (w) { return w.phase === 'taper' ? 0 : w.targetKm; }));
     return Object.assign({}, plan, { opts: o2, weeks: weeks, peakKm: round1(peakKm) });
+  }
+
+  /** Hari lari yang dipakai rencana (pilihan pelari atau pola bawaan). */
+  function planRunDays(opts) {
+    return opts.runDays && opts.runDays.length >= 3 ? opts.runDays.slice().sort(function (a, b) { return a - b; }) : defaultRunDays(opts.days, opts.longDay);
+  }
+
+  /**
+   * Hari yang benar-benar dipakai lari dalam satu minggu (dari log), untuk diadopsi minggu berikutnya.
+   * - Lari < 3 hari: tidak cukup sebagai pola (minggu sakit/sibuk) → null.
+   * - Lari 7 hari: buang hari dengan lari terpendek; minimal 1 hari istirahat tetap dijaga.
+   * - Hari long run = hari lari terpanjang (atau yang ditandai long run).
+   */
+  function actualRunDays(week, logs) {
+    var a = week.days[0].date, b = week.days[6].date;
+    var perDay = {};
+    (logs || []).forEach(function (l) {
+      if (l.date < a || l.date > b || l.type === 'X' || !(Number(l.km) > 0)) return;
+      var dow = (new Date(l.date + 'T12:00:00').getDay() + 6) % 7;
+      var e = perDay[dow] = perDay[dow] || { km: 0, long: false };
+      e.km += Number(l.km);
+      if (l.type === 'L') e.long = true;
+    });
+    var days = Object.keys(perDay).map(Number);
+    if (days.length < 3) return null;
+    while (days.length > 6) {
+      days.sort(function (x, y) { return perDay[x].km - perDay[y].km; });
+      days.shift();
+    }
+    days.sort(function (x, y) { return x - y; });
+    var marked = days.filter(function (d) { return perDay[d].long; });
+    var longDay = (marked.length ? marked : days).reduce(function (m, d) { return perDay[d].km > perDay[m].km ? d : m; }, (marked.length ? marked : days)[0]);
+    return { runDays: days, longDay: longDay };
   }
 
   // ---------- Jadwal minggu berjalan mengikuti log ----------
@@ -610,6 +649,8 @@
     dayRoles: dayRoles,
     defaultRunDays: defaultRunDays,
     reconcileWeek: reconcileWeek,
+    actualRunDays: actualRunDays,
+    planRunDays: planRunDays,
     buildWeek: buildWeek,
     volumeCurve: volumeCurve,
     mondayOf: mondayOf,

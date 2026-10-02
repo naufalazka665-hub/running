@@ -294,13 +294,14 @@
     if (plan.reviews[key] && snap && snap.week === prev.index) {
       plan.weeks = plan.weeks.slice(0, cur).concat(snap.weeks);
       plan.peakKm = snap.peakKm;
+      if (snap.opts) plan.opts = snap.opts;
       if (state.profile) state.profile.vdotOverride = snap.vdotOverride || null;
       plan.adaptations = plan.adaptations.filter(function (a) { return a.afterWeek !== prev.index; });
     }
 
     var vdNow = profileVdot(state.profile);
     var rv = C.weeklyReview(plan, state.logs, state.readiness, prevIdx, vdNow);
-    plan.snapshot = { week: prev.index, weeks: JSON.parse(JSON.stringify(plan.weeks.slice(cur))), peakKm: plan.peakKm, vdotOverride: state.profile ? state.profile.vdotOverride || null : null };
+    plan.snapshot = { week: prev.index, weeks: JSON.parse(JSON.stringify(plan.weeks.slice(cur))), peakKm: plan.peakKm, opts: JSON.parse(JSON.stringify(plan.opts)), vdotOverride: state.profile ? state.profile.vdotOverride || null : null };
 
     var changes = {};
     var curWeek = plan.weeks[cur];
@@ -309,10 +310,11 @@
       changes.vdot = rv.newVdot;
       state.profile = Object.assign({}, state.profile || {}, { vdotOverride: rv.newVdot });
     }
-    if (changes.startKm !== undefined || changes.vdot) {
+    if (rv.schedule) { changes.runDays = rv.schedule.to; changes.longDay = rv.schedule.toLong; }
+    if (changes.startKm !== undefined || changes.vdot || changes.runDays) {
       var before = curWeek.targetKm;
       state.plan = plan = Object.assign(P.adaptPlan(plan, cur, changes), { reviews: plan.reviews, adaptations: plan.adaptations, snapshot: plan.snapshot, createdAt: plan.createdAt });
-      plan.adaptations.push({ date: TODAY, afterWeek: prev.index, week: plan.weeks[cur].index, decision: rv.decision, fromKm: before, toKm: plan.weeks[cur].targetKm, vdot: rv.newVdot || null });
+      plan.adaptations.push({ date: TODAY, afterWeek: prev.index, week: plan.weeks[cur].index, decision: rv.decision, fromKm: before, toKm: plan.weeks[cur].targetKm, vdot: rv.newVdot || null, runDays: rv.schedule ? rv.schedule.to : null, longDay: rv.schedule ? rv.schedule.toLong : null });
     }
     rv.appliedKm = plan.weeks[cur].targetKm;
     plan.reviews[key] = rv;
@@ -354,7 +356,7 @@
         : 'Minggu ' + rv.nextWeek + ' tetap <b class="mono">' + num(rv.appliedKm) + ' km</b> sesuai rencana.';
     }
     $('review-body').innerHTML =
-      '<div class="row"><span class="pill ' + d[0] + '">' + d[1] + '</span>' + (rv.newVdot ? '<span class="pill blue">VDOT baru ' + num(rv.newVdot) + '</span>' : '') + '</div>' +
+      '<div class="row"><span class="pill ' + d[0] + '">' + d[1] + '</span>' + (rv.newVdot ? '<span class="pill blue">VDOT baru ' + num(rv.newVdot) + '</span>' : '') + (rv.schedule ? '<span class="pill blue">Hari lari disesuaikan</span>' : '') + '</div>' +
       '<div class="tiles">' + tiles.map(function (t) { return '<div class="tile"><span class="label">' + t[0] + '</span><b>' + t[1] + '</b><span class="small">' + t[2] + '</span></div>'; }).join('') + '</div>' +
       '<ul class="insights">' + rv.reasons.map(function (r) { return '<li class="insight ' + (rv.decision === 'reduce' ? 'alert' : rv.decision === 'hold' ? 'warn' : 'good') + '">' + esc(r) + '</li>'; }).join('') + '</ul>' +
       (change ? '<p>' + change + '</p>' : '') +
@@ -552,7 +554,7 @@
     var ad = (pl.adaptations || []).slice().reverse();
     $('adapt-list').innerHTML = ad.length ? ad.map(function (a) {
       var d = DECISION[a.decision];
-      return '<li class="row"><span class="mono small">' + fmtDate(a.date) + '</span><span class="pill ' + d[0] + '">' + d[1] + '</span><span>Minggu ' + a.week + ': <span class="mono">' + num(a.fromKm) + ' → ' + num(a.toKm) + ' km</span>' + (a.vdot ? ' · VDOT ' + num(a.vdot) : '') + '</span></li>';
+      return '<li class="row"><span class="mono small">' + fmtDate(a.date) + '</span><span class="pill ' + d[0] + '">' + d[1] + '</span><span>Minggu ' + a.week + ': <span class="mono">' + num(a.fromKm) + ' → ' + num(a.toKm) + ' km</span>' + (a.vdot ? ' · VDOT ' + num(a.vdot) : '') + (a.runDays ? ' · hari lari: ' + a.runDays.map(function (d) { return P.DAY_NAMES[d]; }).join(', ') + ' (long ' + P.DAY_NAMES[a.longDay] + ')' : '') + '</span></li>';
     }).join('') : '<li class="muted small">' + (Object.keys(pl.reviews || {}).length ? 'Semua minggu yang sudah direview berjalan sesuai rencana, jadi volume belum perlu diubah.' : 'Belum ada penyesuaian. Review pertama berjalan otomatis saat minggu berikutnya dimulai.') + '</li>';
     wrap.innerHTML = pl.weeks.map(function (w0, wi) {
       var w = weekView(wi);

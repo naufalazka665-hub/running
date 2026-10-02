@@ -15,6 +15,8 @@ Website statis (HTML/CSS/JS murni, tanpa build dan tanpa server) untuk **merenca
 ### Hari lari pilihan pelari
 Pelari mencentang 3–6 hari yang bisa dipakai lari (mis. Sen, Rab, Jum, Min) dan memilih hari long run di antaranya. Coach membagi peran secara otomatis: long run di hari pilihan, 1–2 sesi kualitas ditempatkan sejauh mungkin dari long run dan satu sama lain (hindari sehari setelah long run, ≥48 jam antar sesi keras), sisanya easy.
 
+**Belajar dari kebiasaan pelari:** saat review awal minggu, coach membaca hari-hari yang benar-benar dipakai lari minggu lalu. Kalau berbeda dari jadwal (mis. jadwal Sen, Rab, Kam, Sab, Min tetapi pelari lari Sel, Kam, Jum, Sab, Min), minggu ini dan seterusnya disusun ulang di hari pelari. Long run pindah ke hari lari terpanjang. Volume, fase, dan tanggal lomba tidak berubah. Minggu dengan <3 hari lari tidak dipakai sebagai pola, dan pelari yang lari 7 hari tetap disisakan 1 hari istirahat.
+
 ### Jadwal minggu berjalan mengikuti log
 Setiap kali log berubah, minggu ini disusun ulang (rencana tersimpan tidak diubah, jadi menghapus/mengoreksi log ikut mengembalikan jadwal):
 - Log dicocokkan ke sesi: hari & jenis sama → jenis sama ±2 hari → hari sama; selebihnya "lari tambahan". Sesi yang dikerjakan di hari lain tampil di hari dikerjakannya.
@@ -82,7 +84,7 @@ Buka `index.html` langsung di browser, atau:
 
 ```bash
 npm start            # http://localhost:8080 (perlu untuk sinkron Strava lokal)
-npm test             # 50 unit test (rumus VDOT vs tabel Daniels, generator rencana, hari lari pilihan, penyesuaian jadwal dari log, rencana adaptif, coach, importer, sinkron akun, pustaka)
+npm test             # 56 unit test (rumus VDOT vs tabel Daniels, generator rencana, hari lari pilihan & hari lari aktual, penyesuaian jadwal dari log, rencana adaptif, coach, importer, sinkron akun, pustaka)
 ```
 
 Bisa di-deploy apa adanya ke GitHub Pages (Settings → Pages → branch, folder root).
