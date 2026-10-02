@@ -306,3 +306,15 @@ details ul { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 6px; }
   .top-inner { position: relative; }
   .account-btn { position: absolute; right: 0; top: 12px; padding: 7px 12px; }
 }
+
+/* ---------- Hari lari & status jadwal ---------- */
+.run-days { border: 0; padding: 0; margin: 0; min-width: 0; }
+.run-days legend { font-size: 0.85rem; font-weight: 600; color: var(--muted); padding: 0; margin-bottom: 6px; }
+.day .tag { font-style: normal; font-family: var(--f-body); font-size: 0.7rem; font-weight: 700; color: var(--track); margin-left: 4px; }
+.day.st-missed .t { text-decoration: line-through; color: var(--muted); }
+.day.st-missed .tag { color: var(--hard); }
+.day.st-rescheduled, .day.st-elsewhere, .day.st-freed { opacity: 0.6; }
+.day.st-rescheduled .t, .day.st-elsewhere .t { text-decoration: line-through; }
+.day.X { border-top-color: var(--track); }
+.day.st-freed { border-top-style: dashed; }
+@media (max-width: 560px) { .day.X { border-left-color: var(--track); border-top-color: var(--line); } }

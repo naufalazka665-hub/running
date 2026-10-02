@@ -35,6 +35,50 @@
 
   var LONG_FRAC = { 3: 0.36, 4: 0.31, 5: 0.28, 6: 0.25 };
 
+  /** Hari lari bawaan (0=Sen..6=Min) untuk jumlah hari & hari long run tertentu. */
+  function defaultRunDays(n, longDay) {
+    var shift = (((longDay === undefined ? 6 : longDay) - 6) % 7 + 7) % 7;
+    return Object.keys(PATTERNS[n]).map(function (k) { return (Number(k) + shift) % 7; }).sort(function (a, b) { return a - b; });
+  }
+
+  function cyc(a, b) { var d = Math.abs(a - b); return Math.min(d, 7 - d); }
+
+  /**
+   * Bagi peran sesi ke hari lari pilihan pelari.
+   * Long run di longDay; 1 sesi kualitas (3 hari lari) atau 2 (≥4 hari) ditempatkan sejauh mungkin
+   * dari long run dan dari satu sama lain. Hari sesudah long run dihindari untuk sesi keras
+   * (prinsip hard–easy; ≥48 jam antar sesi keras). Minggu dianggap berputar (Min → Sen).
+   */
+  function dayRoles(runDays, longDay) {
+    var days = runDays.slice().sort(function (a, b) { return a - b; });
+    var long = days.indexOf(longDay) >= 0 ? longDay : days[days.length - 1];
+    var others = days.filter(function (d) { return d !== long; });
+    var nQ = days.length >= 4 ? 2 : 1;
+    var best = null;
+    function cost(qs) {
+      var c = 0;
+      qs.forEach(function (q) {
+        if ((long + 1) % 7 === q) c += 6;      // sehari setelah long run
+        else if ((q + 1) % 7 === long) c += 4; // sehari sebelum long run
+      });
+      if (qs.length === 2 && cyc(qs[0], qs[1]) === 1) c += 10;
+      var gaps = qs.reduce(function (a, q) { return a + cyc(q, long); }, 0) + (qs.length === 2 ? cyc(qs[0], qs[1]) : 0);
+      return c - 0.1 * gaps;
+    }
+    for (var i = 0; i < others.length; i++) {
+      if (nQ === 1) { var c1 = cost([others[i]]); if (!best || c1 < best.c - 1e-9) best = { c: c1, qs: [others[i]] }; continue; }
+      for (var j = i + 1; j < others.length; j++) {
+        var c2 = cost([others[i], others[j]]);
+        if (!best || c2 < best.c - 1e-9) best = { c: c2, qs: [others[i], others[j]] };
+      }
+    }
+    var roles = {};
+    days.forEach(function (d) { roles[d] = 'E'; });
+    roles[long] = 'L';
+    if (best) { roles[best.qs[0]] = 'Q'; if (best.qs[1] !== undefined) roles[best.qs[1]] = 'Q2'; }
+    return roles;
+  }
+
   function round1(x) { return Math.round(x * 2) / 2; } // kelipatan 0,5 km
 
   function paceTxt(paces, key) {
@@ -208,40 +252,41 @@
   function buildWeek(o, i, v, phase, weekInPhase, isRaceWeek) {
     var goal = GOALS[o.goal];
     var paces = o.vdot ? S.trainingPaces(o.vdot) : null;
-    var shift = ((o.longDay - 6) % 7 + 7) % 7;
-    var pattern = PATTERNS[o.days];
+    var runDays = o.runDays && o.runDays.length >= 3 ? o.runDays : defaultRunDays(o.days, o.longDay);
+    var roles = dayRoles(runDays, o.longDay);
+    var longDow = Number(Object.keys(roles).find(function (k) { return roles[k] === 'L'; }));
+    var nDays = runDays.length;
     var weekKm = round1(v.km);
     var ctx = { phase: phase, goal: o.goal, weekKm: weekKm, paces: paces, weekInPhase: weekInPhase, cutback: v.cutback };
     var days = [];
     for (var d = 0; d < 7; d++) days.push({ dow: d, type: 'R', title: 'Istirahat', desc: 'Istirahat total atau mobilitas/jalan ringan. Adaptasi terjadi saat pemulihan.', km: 0, hardKm: 0 });
 
     // HM & marathon butuh long run relatif lebih panjang (tetap dibatasi longCap & ~42% volume)
-    var frac = Math.min(0.42, LONG_FRAC[o.days] + (o.goal === 'marathon' ? 0.1 : o.goal === 'half' ? 0.04 : 0));
+    var frac = Math.min(0.42, LONG_FRAC[nDays] + (o.goal === 'marathon' ? 0.1 : o.goal === 'half' ? 0.04 : 0));
     var longKm = round1(Math.min(goal.longCap, weekKm * frac));
     if (phase === 'taper') longKm = round1(Math.min(longKm, weekKm * 0.3));
-    var slots = Object.keys(pattern).map(Number);
+    var slots = Object.keys(roles).map(Number);
     var used = 0;
     var assigned = {};
-    slots.forEach(function (s) {
-      var role = pattern[s];
-      var dow = (s + shift) % 7;
+    slots.forEach(function (dow) {
+      var role = roles[dow];
       var sess;
       if (role === 'L') sess = longRun(longKm, phase, o.goal, paces, weekInPhase);
       else if (role === 'Q' || role === 'Q2') sess = qualitySession(role, ctx);
       else return;
       // sesi kualitas pada program 3 hari: hanya satu, bergantian T / I saat build-peak
-      if (o.days === 3 && role === 'Q' && (phase === 'build' || phase === 'peak') && weekInPhase % 2 === 1 && !v.cutback) {
+      if (nDays === 3 && role === 'Q' && (phase === 'build' || phase === 'peak') && weekInPhase % 2 === 1 && !v.cutback) {
         sess = qualitySession('Q2', ctx);
       }
       assigned[dow] = sess;
       used += sess.km;
     });
-    var easySlots = slots.filter(function (s) { return pattern[s] === 'E'; });
+    var easySlots = slots.filter(function (d) { return roles[d] === 'E'; });
     var remaining = Math.max(0, weekKm - used);
-    easySlots.forEach(function (s) {
+    easySlots.forEach(function (d, k) {
       // easy run tidak boleh menyaingi long run; lebih baik volume sedikit di bawah target
       var km = round1(Math.max(3, Math.min(remaining / easySlots.length, Math.max(longKm * 0.7, 5))));
-      assigned[(s + shift) % 7] = (phase === 'base' && s === 0) ? strides(km, paces) : easyRun(km, paces);
+      assigned[d] = (phase === 'base' && k === 0 && easySlots.length >= 2) ? strides(km, paces) : easyRun(km, paces);
     });
 
     Object.keys(assigned).forEach(function (dow) {
@@ -250,10 +295,10 @@
 
     if (isRaceWeek) {
       // hari lomba: sesuai tanggal lomba bila diketahui, kalau tidak di hari long run
-      var raceDow = o.raceDate ? (new Date(o.raceDate + 'T12:00:00').getDay() + 6) % 7 : (6 + shift) % 7;
-      if (raceDow !== (6 + shift) % 7) {
+      var raceDow = o.raceDate ? (new Date(o.raceDate + 'T12:00:00').getDay() + 6) % 7 : longDow;
+      if (raceDow !== longDow) {
         // long run minggu ini dipindah ke easy pendek; lomba menggantikan sesi di hari lomba
-        var lr = (6 + shift) % 7;
+        var lr = longDow;
         if (days[lr].type === 'L') days[lr] = Object.assign({ dow: lr }, easyRun(round1(Math.max(3, days[lr].km * 0.4)), paces));
       }
       days[raceDow] = { dow: raceDow, type: 'RACE', title: 'HARI LOMBA ' + goal.label, km: Math.round(goal.m / 100) / 10, hardKm: goal.m / 1000,
@@ -303,6 +348,15 @@
   function generatePlan(opts) {
     var o = Object.assign({ goal: '10k', weeks: 12, currentKm: 20, days: 4, level: 'beginner', vdot: null, longDay: 6 }, opts);
     o.weeks = Math.max(4, Math.min(24, Math.round(o.weeks)));
+    if (o.runDays && o.runDays.length) {
+      // hari lari pilihan pelari menentukan jumlah hari; long run harus salah satunya
+      o.runDays = o.runDays.map(Number).filter(function (d, i, a) { return d >= 0 && d <= 6 && a.indexOf(d) === i; }).sort(function (a, b) { return a - b; }).slice(0, 6);
+      if (o.runDays.length < 3) o.runDays = null;
+    }
+    if (o.runDays) {
+      o.days = o.runDays.length;
+      if (o.runDays.indexOf(o.longDay) < 0) o.longDay = o.runDays[o.runDays.length - 1];
+    }
     o.days = Math.max(3, Math.min(6, Math.round(o.days)));
     var curve = volumeCurve(o);
     var phaseCount = {};
@@ -373,6 +427,167 @@
     return Object.assign({}, plan, { opts: o2, weeks: weeks, peakKm: round1(peakKm) });
   }
 
+  // ---------- Jadwal minggu berjalan mengikuti log ----------
+
+  var DROP_COST = { L: 100, Q: 40, Q2: 30, E: 3 };
+  var ADJ_HARD = 45;  // dua hari keras berturut-turut yang tidak ada di rencana awal (lebih mahal dari membuang 1 sesi kualitas)
+  var MOVE_COST = 2;
+
+  function logRole(l, longKm) {
+    if (l.type === 'RACE') return 'RACE';
+    if (l.type === 'L' || (Number(l.km) >= Math.max(10, (longKm || 0) * 0.8))) return 'L';
+    if (l.type === 'Q' || Number(l.rpe) >= 7) return 'Q';
+    return 'E';
+  }
+
+  function dayDiff(a, b) { return Math.round((new Date(a + 'T12:00:00') - new Date(b + 'T12:00:00')) / 86400000); }
+  function nextDay(k) { return S.dayKey(S.addDays(new Date(k + 'T12:00:00'), 1)); }
+
+  /**
+   * Cocokkan log dengan jadwal satu minggu lalu susun ulang hari yang tersisa.
+   * - Log dicocokkan ke sesi terencana: hari & jenis sama → jenis sama terdekat → hari sama → "lari tambahan".
+   *   Sesi yang dilakukan di hari lain ditampilkan di hari dilakukannya.
+   * - Sesi yang tergeser (harinya dipakai sesi lain), sesi yang belum lewat, serta long run & sesi kualitas
+   *   yang terlewat masuk ke "kolam" untuk dijadwalkan ulang. Easy yang terlewat dibiarkan (jangan ditumpuk).
+   * - Kolam ditempatkan ke hari lari yang masih kosong (hari ini dan sesudahnya) lewat pencarian menyeluruh
+   *   yang meminimalkan: sesi dibuang (L > Q > Q2 > E), dua hari keras berturut-turut yang baru
+   *   (≥48 jam antar sesi keras), dan perpindahan dari jadwal semula.
+   * - Minggu lomba tidak disusun ulang (hanya status).
+   * Murni: tidak mengubah `week`; mengembalikan { days, notes, changed }.
+   */
+  function reconcileWeek(week, logs, todayKey) {
+    var a = week.days[0].date, b = week.days[6].date;
+    var wl = (logs || []).filter(function (l) { return l.date >= a && l.date <= b && l.type !== 'X'; })
+      .slice().sort(function (x, y) { return x.date < y.date ? -1 : x.date > y.date ? 1 : 0; });
+    var planned = week.days.filter(function (d) { return d.type !== 'R'; }).map(function (d) { return Object.assign({}, d); });
+    var qSeen = 0;
+    planned.forEach(function (d) { d.role = d.type === 'Q' ? (qSeen++ ? 'Q2' : 'Q') : d.type; });
+    var longKm = (planned.find(function (d) { return d.type === 'L'; }) || {}).km || 0;
+    var hasRace = planned.some(function (d) { return d.type === 'RACE'; });
+    var notes = [];
+
+    // 1) cocokkan log
+    var matched = [];   // { p, l }
+    var extras = [];
+    var taken = {};
+    function pick(l, cands) {
+      cands.sort(function (x, y) { return Math.abs(dayDiff(x.date, l.date)) - Math.abs(dayDiff(y.date, l.date)) || (x.date < y.date ? 1 : -1); });
+      return cands[0] || null;
+    }
+    wl.forEach(function (l) {
+      var r = logRole(l, longKm);
+      var free = planned.filter(function (d) { return !taken[d.date]; });
+      var same = free.find(function (d) { return d.date === l.date; });
+      // lintas hari hanya bila jenisnya sama dan selisih ≤2 hari; selebihnya dianggap lari tambahan
+      var near = free.filter(function (d) { return d.type === r && Math.abs(dayDiff(d.date, l.date)) <= 2; });
+      var t = same && same.type === r ? same : pick(l, near) || same || null;
+      if (t) { taken[t.date] = true; matched.push({ p: t, l: l }); } else extras.push(l);
+    });
+    var loggedOn = {};
+    wl.forEach(function (l) { (loggedOn[l.date] = loggedOn[l.date] || []).push(l); });
+    var doneByDate = {};
+    matched.forEach(function (m) { doneByDate[m.l.date] = doneByDate[m.l.date] || m; });
+
+    // 2) kolam sesi yang perlu tempat
+    var pool = [];
+    planned.forEach(function (p) {
+      if (taken[p.date]) return;
+      var displaced = !!loggedOn[p.date];      // harinya terpakai sesi lain
+      if (p.date >= todayKey && !displaced) pool.push(p);
+      else if (displaced || p.role !== 'E') pool.push(Object.assign(p, { overdue: p.date < todayKey || displaced }));
+      else notes.push('Easy ' + dayLabel(p.date) + ' terlewat. Tidak perlu diganti; jangan ditumpuk ke hari lain.');
+    });
+
+    // 3) slot: hari lari terencana mulai hari ini yang belum ada lognya
+    var slots = planned.filter(function (p) { return p.date >= todayKey && !loggedOn[p.date]; }).map(function (p) { return p.date; });
+    var baseHard = {};
+    planned.forEach(function (p) { if (p.role !== 'E') baseHard[p.date] = true; });
+    var hardLogged = {};
+    wl.forEach(function (l) { if (logRole(l, longKm) !== 'E') hardLogged[l.date] = 'log'; });
+
+    var bySlot = {};
+    if (hasRace) {
+      pool.forEach(function (p) { if (slots.indexOf(p.date) >= 0 && !p.overdue) bySlot[p.date] = p; });
+    } else if (pool.length && slots.length) {
+      var best = { cost: Infinity, plan: null };
+      var assign = new Array(slots.length).fill(null);
+      var used = new Array(pool.length).fill(false);
+      var evaluate = function () {
+        var cost = 0, hard = Object.assign({}, hardLogged), placed = {};
+        for (var i = 0; i < slots.length; i++) {
+          var k = assign[i];
+          if (k === null) continue;
+          placed[k] = true;
+          if (pool[k].date !== slots[i]) cost += MOVE_COST;
+          if (pool[k].role !== 'E') hard[slots[i]] = 'new';
+        }
+        pool.forEach(function (p, k) { if (!placed[k]) cost += DROP_COST[p.role] || 3; });
+        Object.keys(hard).forEach(function (dt) {
+          var nx = nextDay(dt);
+          if (!hard[nx] || (hard[dt] !== 'new' && hard[nx] !== 'new')) return;
+          if (baseHard[dt] && baseHard[nx]) return; // pasangan yang memang ada di rencana awal
+          cost += ADJ_HARD;
+        });
+        return cost;
+      };
+      (function dfs(i) {
+        if (i === slots.length) {
+          var c = evaluate();
+          if (c < best.cost - 1e-9) best = { cost: c, plan: assign.slice() };
+          return;
+        }
+        for (var k = 0; k < pool.length; k++) {
+          if (used[k]) continue;
+          used[k] = true; assign[i] = k; dfs(i + 1); used[k] = false;
+        }
+        assign[i] = null; dfs(i + 1);
+      })(0);
+      best.plan.forEach(function (k, i) { if (k !== null) bySlot[slots[i]] = pool[k]; });
+    }
+    var placedAt = {};
+    Object.keys(bySlot).forEach(function (dt) { placedAt[bySlot[dt].date] = dt; });
+
+    // 4) susun tampilan 7 hari
+    var days = week.days.map(function (orig) {
+      var dt = orig.date, base = { dow: orig.dow, date: dt };
+      var m = doneByDate[dt];
+      if (m) return Object.assign({}, m.p, base, { status: 'done', log: m.l, movedFrom: m.p.date !== dt ? m.p.date : null });
+      if (loggedOn[dt]) {
+        var l = loggedOn[dt][0];
+        return Object.assign(base, { type: 'X', role: null, title: 'Lari tambahan', km: Number(l.km) || 0, hardKm: 0, status: 'extra', log: l, desc: 'Lari di luar jadwal. Sudah dihitung dalam beban mingguan.' });
+      }
+      if (slots.indexOf(dt) >= 0) {
+        var p = bySlot[dt];
+        if (p) return Object.assign({}, p, base, { status: 'pending', movedFrom: p.date !== dt ? p.date : null });
+        return Object.assign(base, { type: 'R', role: null, title: 'Kosong (opsional)', km: 0, hardKm: 0, status: 'freed',
+          desc: 'Sesi hari ini sudah dilakukan di hari lain atau dibatalkan agar tidak menumpuk. Istirahat, atau easy 20–30 mnt bila tubuh segar.' });
+      }
+      if (orig.type === 'R') return Object.assign({}, orig, { status: 'rest' });
+      var pm = matched.find(function (x) { return x.p.date === dt; });
+      if (pm) return Object.assign({}, orig, { status: 'elsewhere', doneOn: pm.l.date });
+      if (placedAt[dt]) return Object.assign({}, orig, { status: 'rescheduled', movedTo: placedAt[dt] });
+      return Object.assign({}, orig, { status: 'missed' });
+    });
+
+    // 5) catatan
+    matched.forEach(function (m) {
+      if (m.l.date !== m.p.date) notes.push(m.p.title + ' sudah Anda lakukan ' + dayLabel(m.l.date) + ' (jadwal semula ' + dayLabel(m.p.date) + ').');
+    });
+    extras.forEach(function (l) { notes.push('Lari tambahan ' + dayLabel(l.date) + ' (' + Math.round(l.km * 10) / 10 + ' km) tercatat di luar jadwal.'); });
+    pool.forEach(function (p) {
+      var to = placedAt[p.date];
+      if (to && to !== p.date) notes.push(p.title + ' dipindah dari ' + dayLabel(p.date) + ' ke ' + dayLabel(to) + '.');
+      else if (!to && !hasRace) {
+        if (p.role === 'E') notes.push('Easy ' + dayLabel(p.date) + ' ditiadakan: harinya sudah terpakai sesi lain dan tidak ada hari kosong tersisa.');
+        else notes.push(p.title + ' (' + dayLabel(p.date) + ') dibatalkan minggu ini: tidak ada hari tersisa yang cukup jauh dari sesi keras lain. Lebih baik melewatkannya daripada menumpuk.');
+      }
+    });
+    return { days: days, notes: notes, changed: notes.length > 0 };
+  }
+
+  var DAY_LONG = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
+  function dayLabel(key) { return DAY_LONG[(new Date(key + 'T12:00:00').getDay() + 6) % 7]; }
+
   /** Senin dari minggu yang berisi tanggal d. */
   function mondayOf(d) {
     var x = new Date(d);
@@ -392,6 +607,9 @@
     DAY_NAMES: DAY_NAMES,
     generatePlan: generatePlan,
     adaptPlan: adaptPlan,
+    dayRoles: dayRoles,
+    defaultRunDays: defaultRunDays,
+    reconcileWeek: reconcileWeek,
     buildWeek: buildWeek,
     volumeCurve: volumeCurve,
     mondayOf: mondayOf,

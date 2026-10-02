@@ -12,6 +12,17 @@ Website statis (HTML/CSS/JS murni, tanpa build dan tanpa server) untuk **merenca
 | **Profil & zona** | VDOT, pace E/M/T/I/R, zona HR Karvonen, prediksi lomba (VDOT & Riegel) | Daniels & Gilbert 1979, Tanaka 2001, Karvonen 1957, Riegel 1981 |
 | **Pustaka sains** | 15 topik (fisiologi, 80/20, taper, cedera, kekuatan, nutrisi, panas tropis, pacing, dll.) dengan tingkat bukti & referensi jurnal, plus pencarian "Tanya coach" | lihat `js/knowledge.js` |
 
+### Hari lari pilihan pelari
+Pelari mencentang 3–6 hari yang bisa dipakai lari (mis. Sen, Rab, Jum, Min) dan memilih hari long run di antaranya. Coach membagi peran secara otomatis: long run di hari pilihan, 1–2 sesi kualitas ditempatkan sejauh mungkin dari long run dan satu sama lain (hindari sehari setelah long run, ≥48 jam antar sesi keras), sisanya easy.
+
+### Jadwal minggu berjalan mengikuti log
+Setiap kali log berubah, minggu ini disusun ulang (rencana tersimpan tidak diubah, jadi menghapus/mengoreksi log ikut mengembalikan jadwal):
+- Log dicocokkan ke sesi: hari & jenis sama → jenis sama ±2 hari → hari sama; selebihnya "lari tambahan". Sesi yang dikerjakan di hari lain tampil di hari dikerjakannya.
+- Long run & sesi kualitas yang terlewat dijadwalkan ulang ke hari lari yang masih kosong; easy yang terlewat **tidak** ditumpuk.
+- Penempatan dicari menyeluruh dengan biaya: membuang sesi (long > kualitas > easy), dua hari keras berturut-turut yang tidak ada di rencana awal (lebih mahal daripada membuang satu sesi kualitas), dan perpindahan dari jadwal semula.
+- Minggu lomba tidak disusun ulang.
+- Setiap perubahan dijelaskan di panel "Program minggu ini" (mis. "Threshold dipindah dari Selasa ke Kamis").
+
 ### Rencana adaptif (update otomatis tiap minggu)
 Semua data tersimpan otomatis (indikator "Tersimpan otomatis" di kanan atas). Saat Anda membuka aplikasi di minggu baru, coach me-review minggu sebelumnya lalu menyusun ulang minggu ini dan sisa rencana:
 
@@ -71,7 +82,7 @@ Buka `index.html` langsung di browser, atau:
 
 ```bash
 npm start            # http://localhost:8080 (perlu untuk sinkron Strava lokal)
-npm test             # 40 unit test (rumus VDOT vs tabel Daniels, generator rencana, rencana adaptif, coach, importer, sinkron akun, pustaka)
+npm test             # 50 unit test (rumus VDOT vs tabel Daniels, generator rencana, hari lari pilihan, penyesuaian jadwal dari log, rencana adaptif, coach, importer, sinkron akun, pustaka)
 ```
 
 Bisa di-deploy apa adanya ke GitHub Pages (Settings → Pages → branch, folder root).

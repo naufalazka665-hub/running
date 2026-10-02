@@ -185,23 +185,68 @@
   }
   function loggedOn(key) { return state.logs.filter(function (l) { return l.date === key; }); }
 
+  /**
+   * Tampilan minggu yang sudah disesuaikan dengan log (Plan.reconcileWeek).
+   * Rencana tersimpan tidak diubah; penyesuaian dihitung ulang setiap render agar selalu
+   * konsisten dengan log terbaru (log dihapus/dikoreksi → jadwal ikut kembali).
+   */
+  var viewCache = {};
+  function weekView(wi) {
+    if (viewCache[wi]) return viewCache[wi];
+    var w = state.plan.weeks[wi];
+    var v = w;
+    if (w.days[0].date <= TODAY) {
+      var r = P.reconcileWeek(w, state.logs, TODAY);
+      v = Object.assign({}, w, { days: r.days, notes: r.notes, adjusted: r.changed,
+        totalKm: Math.round(r.days.reduce(function (a, d) { return a + (d.status === 'missed' || d.status === 'elsewhere' || d.status === 'rescheduled' ? 0 : d.status === 'done' || d.status === 'extra' ? Number(d.log.km) || 0 : d.km); }, 0) * 2) / 2 });
+    }
+    viewCache[wi] = v;
+    return v;
+  }
+  function viewDay(key) {
+    var wi = weekIdxOf(key);
+    if (wi < 0) return null;
+    var v = weekView(wi);
+    return { week: v, day: v.days.find(function (d) { return d.date === key; }), wi: wi };
+  }
+
+  var STATUS_TAG = {
+    missed: 'terlewat', rescheduled: 'dipindah', elsewhere: 'sudah dilakukan', freed: 'kosong', extra: 'tambahan'
+  };
+  function shortDay(key) { return key ? P.DAY_NAMES[(new Date(key + 'T12:00:00').getDay() + 6) % 7] : ''; }
+
   function dayCell(d, opts) {
-    var done = d.date && d.type !== 'R' && loggedOn(d.date).length > 0;
-    var cls = 'day ' + d.type + (d.date === TODAY ? ' today-mark' : '') + (done ? ' done' : '');
+    var st = d.status || (d.date && d.type !== 'R' && loggedOn(d.date).length ? 'done' : '');
+    var cls = 'day ' + d.type + (d.date === TODAY ? ' today-mark' : '') + (st ? ' st-' + st : '') + (st === 'done' ? ' done' : '');
+    var tag = st === 'done' && d.movedFrom ? 'dari ' + shortDay(d.movedFrom)
+      : st === 'pending' && d.movedFrom ? '↻ dari ' + shortDay(d.movedFrom)
+      : st === 'rescheduled' ? '→ ' + shortDay(d.movedTo)
+      : st === 'elsewhere' ? '✓ ' + shortDay(d.doneOn)
+      : STATUS_TAG[st] || '';
+    var km = (st === 'done' || st === 'extra') && d.log ? Number(d.log.km) : d.km;
     return '<button type="button" class="' + cls + '" data-date="' + esc(d.date || '') + '" data-week="' + opts.week + '" data-dow="' + d.dow + '">' +
       '<span class="d">' + P.DAY_NAMES[d.dow] + (d.date ? ' ' + Number(d.date.slice(8)) : '') + '</span>' +
       '<span class="t">' + esc(d.title) + '</span>' +
-      '<span class="k">' + (d.km ? num(d.km) + ' km' : '–') + '</span></button>';
+      '<span class="k">' + (km ? num(km) + ' km' : '–') + (tag ? ' <i class="tag">' + esc(tag) + '</i>' : '') + '</span></button>';
   }
 
   function dayDetail(d) {
     var done = d.date ? loggedOn(d.date) : [];
+    var status = {
+      done: d.movedFrom ? 'Selesai di hari ini (jadwal semula ' + DAYS_LONG[(new Date(d.movedFrom + 'T12:00:00').getDay())] + ').' : 'Selesai.',
+      pending: d.movedFrom ? 'Dipindah ke sini dari ' + DAYS_LONG[(new Date(d.movedFrom + 'T12:00:00').getDay())] + '.' : '',
+      missed: 'Terlewat.',
+      rescheduled: 'Dijadwalkan ulang ke ' + (d.movedTo ? DAYS_LONG[new Date(d.movedTo + 'T12:00:00').getDay()] : '') + '.',
+      elsewhere: 'Sudah dilakukan ' + (d.doneOn ? DAYS_LONG[new Date(d.doneOn + 'T12:00:00').getDay()] : '') + '.',
+      extra: 'Lari di luar jadwal.'
+    }[d.status] || '';
     var html = '<div class="detail"><div class="row"><b>' + esc(d.title) + '</b>' +
       (d.zone ? '<span class="pill grey">' + esc(d.zone) + '</span>' : '') +
-      (d.rpe ? '<span class="pill grey">RPE ' + esc(d.rpe) + '</span>' : '') + '</div>' +
+      (d.rpe && d.status !== 'extra' ? '<span class="pill grey">RPE ' + esc(d.rpe) + '</span>' : '') + '</div>' +
+      (status ? '<p class="small"><b>' + esc(status) + '</b></p>' : '') +
       '<p>' + esc(d.desc) + '</p>';
-    if (done.length) html += '<p class="small muted">Tercatat: ' + done.map(function (l) { return num(l.km) + ' km, ' + l.minutes + ' mnt, RPE ' + l.rpe; }).join(' · ') + '</p>';
-    else if (d.type !== 'R' && d.date && d.date <= TODAY) html += '<div><button type="button" class="btn sm" data-logfrom="' + esc(d.date) + '">Catat sesi ini</button></div>';
+    if (done.length) html += '<p class="small muted">Tercatat: ' + done.map(function (l) { return num(l.km) + ' km, ' + Math.round(l.minutes) + ' mnt, RPE ' + l.rpe; }).join(' · ') + '</p>';
+    else if (d.type !== 'R' && d.date && d.date <= TODAY && d.status !== 'elsewhere' && d.status !== 'rescheduled') html += '<div><button type="button" class="btn sm" data-logfrom="' + esc(d.date) + '">Catat sesi ini</button></div>';
     return html + '</div>';
   }
 
@@ -209,7 +254,7 @@
     container.addEventListener('click', function (e) {
       var b = e.target.closest('.day');
       if (!b) return;
-      var w = state.plan.weeks[Number(b.dataset.week)];
+      var w = weekView(Number(b.dataset.week));
       var d = w.days[Number(b.dataset.dow)];
       container.querySelectorAll('.day').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
       detailEl.innerHTML = dayDetail(d);
@@ -324,9 +369,11 @@
     var lines = ['Program lari minggu ' + w.index + '/' + state.plan.weeks.length + ' (' + PHASE_LABEL[w.phase] + (w.cutback ? ', minggu ringan' : '') + ') · target ' + P.GOALS[o.goal].label + ' ' + (o.raceDate ? fmtDate(o.raceDate, true) : ''),
       'Total ' + num(w.totalKm) + ' km', ''];
     w.days.forEach(function (d) {
-      lines.push(DAYS_LONG[(d.dow + 1) % 7] + ' ' + fmtDate(d.date) + ': ' + d.title + (d.km ? ' (' + num(d.km) + ' km)' : ''));
-      if (d.type !== 'R') lines.push('   ' + d.desc);
+      var tag = d.status === 'done' ? ' ✓' : d.status === 'missed' ? ' (terlewat)' : d.status === 'rescheduled' ? ' (dipindah ke ' + DAYS_LONG[new Date(d.movedTo + 'T12:00:00').getDay()] + ')' : d.status === 'elsewhere' ? ' (sudah dilakukan)' : d.movedFrom ? ' (dipindah dari ' + DAYS_LONG[new Date(d.movedFrom + 'T12:00:00').getDay()] + ')' : '';
+      lines.push(DAYS_LONG[(d.dow + 1) % 7] + ' ' + fmtDate(d.date) + ': ' + d.title + (d.km ? ' (' + num(d.km) + ' km)' : '') + tag);
+      if (d.type !== 'R' && d.type !== 'X' && (!d.status || d.status === 'pending')) lines.push('   ' + d.desc);
     });
+    if (w.notes && w.notes.length) { lines.push('', 'Penyesuaian:'); w.notes.forEach(function (n) { lines.push('- ' + n); }); }
     return lines.join('\n');
   }
 
@@ -347,7 +394,7 @@
   // ---------- HARI INI ----------
   function renderToday() {
     $('today-date').textContent = fmtDate(TODAY, true);
-    var hit = findDay(TODAY);
+    var hit = viewDay(TODAY);
     var card = $('session-card');
     var r = state.readiness[TODAY];
     var ready = r ? C.readiness(r) : null;
@@ -364,14 +411,17 @@
       $('today-week').textContent = '';
     } else {
       var w = hit.week, d = hit.day;
-      var adj = ready ? C.adjustSession(d, ready) : null;
+      var isDone = d.status === 'done' || d.status === 'extra';
+      var adj = ready && !isDone ? C.adjustSession(d, ready) : null;
       $('today-week').textContent = 'Minggu ' + w.index + ' dari ' + state.plan.weeks.length + ' · fase ' + PHASE_LABEL[w.phase] + (w.cutback ? ' (minggu ringan)' : '');
       card.innerHTML = '<div class="row"><span class="pill">' + esc(TYPE_LABEL[d.type] || d.type) + '</span>' +
         (d.zone ? '<span class="label">' + esc(d.zone) + (d.rpe ? ' · RPE ' + esc(d.rpe) : '') + '</span>' : '') + '</div>' +
         '<div class="session-title">' + esc(adj && adj.adjusted ? adj.adjusted.title : d.title) + '</div>' +
         '<div class="session-km">' + (d.km ? num(adj && adj.adjusted ? adj.adjusted.km : d.km) + ' km' : 'Tanpa lari') + '</div>' +
         '<p class="session-desc">' + esc(d.desc) + '</p>' +
-        (adj ? '<p class="advice">' + esc(adj.advice) + '</p>' : '<p class="small" style="opacity:.85">Isi cek kesiapan untuk penyesuaian otomatis.</p>');
+        (isDone ? '<p class="advice">Sudah tercatat: ' + num(d.log.km) + ' km, ' + Math.round(d.log.minutes) + ' mnt, RPE ' + d.log.rpe + '. Pulihkan dengan baik.</p>'
+          : d.movedFrom ? '<p class="advice">Dipindah ke hari ini dari ' + DAYS_LONG[new Date(d.movedFrom + 'T12:00:00').getDay()] + ' mengikuti log Anda.</p>' + (adj ? '<p class="advice">' + esc(adj.advice) + '</p>' : '')
+          : adj ? '<p class="advice">' + esc(adj.advice) + '</p>' : '<p class="small" style="opacity:.85">Isi cek kesiapan untuk penyesuaian otomatis.</p>');
     }
 
     // readiness hasil
@@ -430,15 +480,19 @@
 
   function renderThisWeek() {
     var panel = $('this-week-panel');
-    var hit = findDay(TODAY);
+    var hit = viewDay(TODAY);
     if (!hit) { panel.hidden = true; return; }
     panel.hidden = false;
-    var w = hit.week, wi = state.plan.weeks.indexOf(w);
+    var w = hit.week, wi = hit.wi;
     var comp = C.compliance(state.plan, state.logs, new Date());
     $('this-week-meta').textContent = (comp ? num(comp.doneKm) + ' / ' + num(comp.plannedKm) + ' km' : '') + ' · ' + w.hardPct + '% volume intensitas tinggi';
     $('this-week').innerHTML = w.days.map(function (d) { return dayCell(d, { week: wi }); }).join('');
     $('copy-week').onclick = function () { copyWeek(w); };
     $('this-week-detail').innerHTML = dayDetail(hit.day);
+    var notes = w.notes || [];
+    $('this-week-notes').innerHTML = notes.length
+      ? '<p class="label">Jadwal disesuaikan dengan log Anda</p><ul class="insights">' + notes.map(function (n) { return '<li class="insight info">' + esc(n) + '</li>'; }).join('') + '</ul>'
+      : '';
   }
 
   // ---------- RENCANA ----------
@@ -450,10 +504,12 @@
     var o = state.plan && state.plan.opts;
     if (o) {
       $('p-goal').value = o.goal; $('p-weeks').value = o.weeks; $('p-km').value = o.currentKm;
-      $('p-days').value = String(o.days); $('p-level').value = o.level; $('p-long').value = String(o.longDay);
+      $('p-level').value = o.level;
+      setRunDays(o.runDays && o.runDays.length ? o.runDays : P.defaultRunDays(o.days, o.longDay), o.longDay);
       if (o.raceDate) $('p-date').value = o.raceDate;
     } else if (!$('p-date').value) {
       $('p-date').value = S.dayKey(S.addDays(P.mondayOf(new Date()), 12 * 7 - 1));
+      setRunDays([1, 3, 5, 6], 6);
     }
     $('plan-delete').hidden = !state.plan;
   }
@@ -498,7 +554,8 @@
       var d = DECISION[a.decision];
       return '<li class="row"><span class="mono small">' + fmtDate(a.date) + '</span><span class="pill ' + d[0] + '">' + d[1] + '</span><span>Minggu ' + a.week + ': <span class="mono">' + num(a.fromKm) + ' → ' + num(a.toKm) + ' km</span>' + (a.vdot ? ' · VDOT ' + num(a.vdot) : '') + '</span></li>';
     }).join('') : '<li class="muted small">' + (Object.keys(pl.reviews || {}).length ? 'Semua minggu yang sudah direview berjalan sesuai rencana, jadi volume belum perlu diubah.' : 'Belum ada penyesuaian. Review pertama berjalan otomatis saat minggu berikutnya dimulai.') + '</li>';
-    wrap.innerHTML = pl.weeks.map(function (w, wi) {
+    wrap.innerHTML = pl.weeks.map(function (w0, wi) {
+      var w = weekView(wi);
       var cur = w.days[0].date <= TODAY && w.days[6].date >= TODAY;
       return '<article class="wk' + (cur ? ' current' : '') + '" id="wk-' + w.index + '">' +
         '<div class="wk-head"><h3>Minggu ' + w.index + '</h3>' +
@@ -512,7 +569,30 @@
         '<div class="wk-detail"></div></article>';
     }).join('');
     wrap.querySelectorAll('.wk').forEach(function (el) { bindWeek(el.querySelector('.week'), el.querySelector('.wk-detail')); });
-    wrap.querySelectorAll('[data-copy]').forEach(function (b) { b.addEventListener('click', function () { copyWeek(pl.weeks[Number(b.dataset.copy)]); }); });
+    wrap.querySelectorAll('[data-copy]').forEach(function (b) { b.addEventListener('click', function () { copyWeek(weekView(Number(b.dataset.copy))); }); });
+  }
+
+  var DAY_FULL = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
+  function getRunDays() {
+    return Array.prototype.slice.call(document.querySelectorAll('input[name="p-run"]:checked')).map(function (x) { return Number(x.value); });
+  }
+  function setRunDays(days, longDay) {
+    document.querySelectorAll('input[name="p-run"]').forEach(function (x) { x.checked = days.indexOf(Number(x.value)) >= 0; });
+    syncLongOptions(longDay);
+  }
+  /** Pilihan hari long run hanya dari hari lari yang dicentang; tampilkan peran tiap hari. */
+  function syncLongOptions(prefer) {
+    var days = getRunDays();
+    var sel = $('p-long');
+    var cur = prefer !== undefined ? Number(prefer) : Number(sel.value);
+    if (days.indexOf(cur) < 0) cur = days.indexOf(6) >= 0 ? 6 : days.indexOf(5) >= 0 ? 5 : days[days.length - 1];
+    sel.innerHTML = days.map(function (d) { return '<option value="' + d + '"' + (d === cur ? ' selected' : '') + '>' + DAY_FULL[d] + '</option>'; }).join('');
+    var msg = $('p-run-msg');
+    if (days.length < 3 || days.length > 6) { msg.textContent = 'Pilih 3–6 hari lari. Minimal 1 hari istirahat per minggu.'; msg.className = 'hint err'; return; }
+    var roles = P.dayRoles(days, cur);
+    var label = { L: 'long run', Q: 'kualitas', Q2: 'kualitas', E: 'easy' };
+    msg.className = 'hint';
+    msg.textContent = 'Pembagian: ' + days.map(function (d) { return DAY_FULL[d] + ' ' + label[roles[d]]; }).join(' · ') + '. Sesi kualitas dijauhkan dari long run agar ada ≥48 jam pemulihan.';
   }
 
   function onPlanSubmit(e) {
@@ -520,8 +600,10 @@
     var raceDate = new Date($('p-date').value + 'T12:00:00');
     if (isNaN(raceDate)) return;
     var weeks = Number($('p-weeks').value);
+    var runDays = getRunDays();
+    if (runDays.length < 3 || runDays.length > 6) { toast('Pilih 3–6 hari lari.'); return; }
     var opts = {
-      goal: $('p-goal').value, weeks: weeks, currentKm: Number($('p-km').value), days: Number($('p-days').value),
+      goal: $('p-goal').value, weeks: weeks, currentKm: Number($('p-km').value), days: runDays.length, runDays: runDays,
       level: $('p-level').value, longDay: Number($('p-long').value), vdot: profileVdot(state.profile), raceDate: $('p-date').value
     };
     opts.startDate = P.startForRace(raceDate, weeks);
@@ -1004,6 +1086,7 @@
 
   // ---------- Init ----------
   function renderAll() {
+    viewCache = {};
     $('sample-banner').hidden = !state.sample;
     renderSaveState();
     renderAccount();
@@ -1078,6 +1161,8 @@
 
     bindWeek($('this-week'), $('this-week-detail'));
     $('plan-form').addEventListener('submit', onPlanSubmit);
+    document.querySelectorAll('input[name="p-run"]').forEach(function (x) { x.addEventListener('change', function () { syncLongOptions(); }); });
+    $('p-long').addEventListener('change', function () { syncLongOptions(); });
     $('plan-delete').addEventListener('click', function () { state.plan = null; save(); renderAll(); });
     $('log-form').addEventListener('submit', onLogSubmit);
     $('l-rpe').addEventListener('input', updateRpe);
