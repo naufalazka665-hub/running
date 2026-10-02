@@ -70,7 +70,7 @@ a { color: var(--track); }
 .brand { display: flex; align-items: baseline; gap: 10px; padding-block: 10px; }
 .brand-name { font-family: var(--f-display); font-size: 1.9rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; font-style: italic; }
 .brand-sub { font-size: 0.8rem; opacity: 0.85; }
-.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; margin-left: auto; }
+.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; margin-left: auto; min-width: 0; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
   appearance: none; border: 0; background: transparent; color: inherit; cursor: pointer;
@@ -284,3 +284,25 @@ details ul { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 6px; }
 .rpe-edit.amber { background: var(--mod-soft); color: var(--mod); }
 .rpe-edit.red { background: var(--hard-soft); color: var(--hard); }
 .src { font-size: 0.7rem; padding: 1px 7px; }
+
+/* ---------- Akun ---------- */
+.account-btn {
+  appearance: none; cursor: pointer; font: 700 0.9rem/1 var(--f-body); color: var(--track); background: var(--track-ink);
+  border: 0; border-radius: 999px; padding: 9px 14px; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.account-btn:hover { filter: brightness(0.95); }
+.account-panel { max-width: 520px; }
+.acc-form { display: grid; gap: 14px; }
+.acc-switch { margin-bottom: 4px; }
+.acc-who { display: flex; gap: 14px; align-items: center; }
+.acc-who > div { min-width: 0; overflow-wrap: anywhere; }
+.avatar { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--track); color: var(--track-ink); font: 800 1.3rem var(--f-display); }
+.linkish { appearance: none; background: none; border: 0; padding: 0; color: var(--track); font: inherit; text-decoration: underline; cursor: pointer; }
+.ok { color: var(--easy); font-weight: 600; }
+.save-state[data-state="pending"]::before { background: var(--mod); }
+.save-state[data-state="saving"]::before { background: var(--track); }
+.save-state[data-state="sample"]::before { background: var(--rest); }
+@media (max-width: 600px) {
+  .top-inner { position: relative; }
+  .account-btn { position: absolute; right: 0; top: 12px; padding: 7px 12px; }
+}

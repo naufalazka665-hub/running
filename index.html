@@ -21,6 +21,7 @@
       <button class="tab" role="tab" id="tab-profile" data-view="profile" aria-selected="false">Profil &amp; zona</button>
       <button class="tab" role="tab" id="tab-library" data-view="library" aria-selected="false">Pustaka sains</button>
     </nav>
+    <button type="button" class="account-btn" id="account-btn" aria-label="Akun">Masuk</button>
   </div>
 </header>
 <div class="lanes" aria-hidden="true"></div>
@@ -29,7 +30,10 @@
   <p class="save-state" id="save-state" aria-live="polite"></p>
   <div id="sample-banner" class="banner" hidden>
     <span>Anda sedang melihat <b>data contoh</b> (pelari 10K 55:00, target half marathon). Ganti dengan data Anda kapan saja.</span>
-    <button class="btn sm" id="clear-sample" type="button">Mulai dengan data saya</button>
+    <div class="row">
+      <button class="btn sm" id="clear-sample" type="button">Mulai dengan data saya</button>
+      <button class="btn ghost sm" id="sample-login" type="button">Sudah punya akun? Masuk</button>
+    </div>
   </div>
 
   <!-- ================= HARI INI ================= -->
@@ -270,7 +274,7 @@
     </div>
     <div class="panel">
       <h3>Data &amp; cadangan</h3>
-      <p class="muted small">Semua data tersimpan di browser ini saja (localStorage). Ekspor secara berkala bila ingin aman.</p>
+      <p class="muted small">Tanpa akun, data tersimpan di browser ini saja. <button type="button" class="linkish" data-go="account">Masuk atau buat akun</button> agar data tersimpan di cloud dan bisa dibuka dari perangkat lain. Ekspor JSON tetap tersedia sebagai cadangan.</p>
       <div class="row">
         <button class="btn ghost sm" type="button" id="export-btn">Ekspor JSON</button>
         <label class="btn ghost sm" for="import-file">Impor JSON</label>
@@ -303,16 +307,27 @@
     <div class="topics" id="topics"></div>
   </section>
 
+  <!-- ================= AKUN ================= -->
+  <section class="view" id="view-account" role="region" aria-label="Akun" hidden>
+    <div class="view-head">
+      <div><p class="label">Satu akun, semua perangkat</p><h2>Akun pelari</h2></div>
+      <p class="muted">Dengan akun, profil, rencana, dan log Anda tersimpan di cloud. Buka Lintasan di HP atau laptop mana pun, masuk, dan semua data langsung ada. Tanpa akun, data hanya tersimpan di browser ini.</p>
+    </div>
+    <div class="panel account-panel" id="account-box"></div>
+  </section>
+
   <p class="toast" id="toast" role="status" hidden></p>
   <p class="disclaimer">Lintasan adalah alat edukasi dan perencanaan, bukan pengganti dokter, fisioterapis, atau pelatih bersertifikat. Konsultasikan dengan tenaga medis bila Anda punya kondisi jantung, cedera, atau gejala yang mengkhawatirkan.</p>
 </main>
 
+<script src="js/config.js"></script>
 <script src="js/science.js"></script>
 <script src="js/plan.js"></script>
 <script src="js/coach.js"></script>
 <script src="js/knowledge.js"></script>
 <script src="js/importers.js"></script>
 <script src="js/strava.js"></script>
+<script src="js/sync.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

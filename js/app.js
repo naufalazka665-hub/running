@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var S = window.Science, P = window.Plan, C = window.Coach, K = window.Knowledge, I = window.Importers, ST = window.Strava;
+  var S = window.Science, P = window.Plan, C = window.Coach, K = window.Knowledge, I = window.Importers, ST = window.Strava, CL = window.Cloud;
   var KEY = 'lintasan.v1';
   var $ = function (id) { return document.getElementById(id); };
   var TODAY = S.dayKey(new Date());
@@ -40,14 +40,63 @@
     } catch (e) {
       saveOk = false; // storage diblokir: tetap jalan di memori
     }
+    if (CL && CL.user() && !state.sample) schedulePush();
     renderSaveState();
-    if (msg) toast(saveOk ? msg : 'Browser ini memblokir penyimpanan. Gunakan Ekspor JSON agar data tidak hilang.');
+    if (msg) toast(saveOk || (CL && CL.user()) ? msg : 'Browser ini memblokir penyimpanan. Gunakan Ekspor JSON agar data tidak hilang.');
   }
+
+  // ---------- Sinkron akun (cloud) ----------
+  var cloudStatus = 'off'; // off | saving | synced | pending
+  var cloudAt = null;
+  var pushTimer = null;
+
+  function schedulePush() {
+    cloudStatus = 'saving';
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(pushNow, 1200);
+  }
+
+  async function pushNow() {
+    if (!CL || !CL.user()) return;
+    try {
+      await CL.push(state);
+      cloudStatus = 'synced'; cloudAt = new Date();
+    } catch (e) {
+      cloudStatus = 'pending'; // dicoba lagi saat online / simpan berikutnya
+    }
+    renderSaveState();
+    renderAccount();
+  }
+
+  /** Ambil data akun, gabungkan dengan perangkat ini, lalu simpan ke keduanya. */
+  async function pullAndMerge() {
+    var remote = await CL.pull();
+    var m = CL.merge(state, remote);
+    state = m.state;
+    if (!state.readiness) state.readiness = {};
+    if (!state.logs) state.logs = [];
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* abaikan */ }
+    if (!remote || m.source !== 'remote') await pushNow();
+    else { cloudStatus = 'synced'; cloudAt = new Date(); }
+    return m;
+  }
+
+  function hhmm(t) { return ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2); }
 
   function renderSaveState() {
     var el = $('save-state');
     if (!el) return;
-    if (state.sample) { el.textContent = 'Data contoh, belum disimpan'; return; }
+    var btn = $('account-btn');
+    var u = CL && CL.user();
+    if (btn) btn.textContent = u ? (u.email || 'Akun').split('@')[0] : 'Masuk';
+    el.dataset.state = u ? cloudStatus : (state.sample ? 'sample' : 'local');
+    if (state.sample) { el.textContent = u ? 'Akun belum berisi data. Isi profil untuk mulai.' : 'Data contoh, belum disimpan'; return; }
+    if (u) {
+      el.textContent = cloudStatus === 'saving' ? 'Menyimpan ke akun…'
+        : cloudStatus === 'pending' ? 'Tersimpan di perangkat; sinkron ke akun tertunda (offline). Dicoba lagi otomatis.'
+        : 'Tersinkron ke akun' + (cloudAt ? ' · ' + hhmm(cloudAt) : '');
+      return;
+    }
     if (!saveOk) { el.textContent = 'Tidak tersimpan: penyimpanan browser diblokir'; return; }
     var t = state.savedAt ? new Date(state.savedAt) : null;
     el.textContent = t ? 'Tersimpan otomatis · ' + t.getDate() + ' ' + MONTHS[t.getMonth()] + ', ' + ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) : 'Tersimpan otomatis di perangkat ini';
@@ -108,17 +157,20 @@
     return st;
   }
 
-  function emptyState() { return { profile: null, plan: null, logs: [], readiness: {}, sample: false }; }
+  function emptyState() { return { profile: null, plan: null, logs: [], readiness: {}, sample: false, ignoredExt: [], deletedLogIds: [] }; }
 
   // ---------- Navigasi ----------
-  var VIEWS = ['today', 'plan', 'log', 'profile', 'library'];
+  var VIEWS = ['today', 'plan', 'log', 'profile', 'library', 'account'];
   function show(view) {
     if (VIEWS.indexOf(view) < 0) view = 'today';
     VIEWS.forEach(function (v) {
       $('view-' + v).hidden = v !== view;
-      $('tab-' + v).setAttribute('aria-selected', v === view ? 'true' : 'false');
+      var t = $('tab-' + v);
+      if (t) t.setAttribute('aria-selected', v === view ? 'true' : 'false');
     });
-    try { history.replaceState(null, '', '#' + view); } catch (e) { /* abaikan */ }
+    // jangan hapus token dari tautan email (konfirmasi / reset password) sebelum diproses
+    var authHash = /access_token=|error_description=|type=recovery/.test(location.hash);
+    if (!authHash) { try { history.replaceState(null, '', '#' + view); } catch (e) { /* abaikan */ } }
     window.scrollTo(0, 0);
   }
 
@@ -589,6 +641,120 @@
     return !!runWeeklyReview(false);
   }
 
+  // ---------- AKUN ----------
+  var accountMode = 'signin'; // signin | signup | reset | recovery
+  var accountMsg = null;
+
+  function renderAccount() {
+    var box = $('account-box');
+    if (!box) return;
+    var note = accountMsg ? '<p class="small ' + (accountMsg.err ? 'err' : 'ok') + '" role="status">' + esc(accountMsg.text) + '</p>' : '';
+    if (!CL || !CL.enabled()) {
+      box.innerHTML = '<p>Fitur akun belum diaktifkan di situs ini. Data Anda tetap tersimpan otomatis di browser ini.</p>' +
+        '<p class="small muted">Pemilik situs: buat proyek Supabase gratis, jalankan <code>supabase/schema.sql</code>, lalu isi URL &amp; anon key di <code>js/config.js</code>. Langkah lengkap ada di README.</p>';
+      return;
+    }
+    var u = CL.user();
+    if (accountMode === 'recovery' && u) {
+      box.innerHTML = '<h3>Buat password baru</h3><form id="acc-newpass" class="acc-form">' +
+        '<label class="field"><span>Password baru (min. 8 karakter)</span><input id="acc-pass2" type="password" minlength="8" autocomplete="new-password" required></label>' +
+        '<button class="btn" type="submit">Simpan password</button></form>' + note;
+      $('acc-newpass').addEventListener('submit', function (e) {
+        e.preventDefault();
+        CL.updatePassword($('acc-pass2').value).then(function () {
+          accountMode = 'signin'; accountMsg = { text: 'Password diperbarui.' }; renderAccount();
+        }).catch(function (err) { accountMsg = { text: err.message, err: true }; renderAccount(); });
+      });
+      return;
+    }
+    if (u) {
+      box.innerHTML = '<div class="acc-who"><span class="avatar" aria-hidden="true">' + esc((u.email || '?')[0].toUpperCase()) + '</span>' +
+        '<div><b>' + esc(u.email) + '</b><p class="small muted">' + esc($('save-state').textContent) + '</p></div></div>' +
+        '<p class="small">Profil, rencana, log, dan cek kesiapan tersimpan di akun ini. Masuk dari HP atau laptop lain dengan email yang sama dan data Anda langsung muncul.</p>' +
+        '<div class="row"><button type="button" class="btn sm" id="acc-sync">Sinkron sekarang</button>' +
+        '<button type="button" class="btn ghost sm" id="acc-out">Keluar</button></div>' +
+        '<p class="hint">Keluar akan menghapus data dari perangkat ini saja (aman di akun), cocok untuk perangkat bersama.</p>' + note;
+      $('acc-sync').addEventListener('click', function () {
+        pullAndMerge().then(function () { afterLogChange([]); localSaveOnly(); renderAll(); accountMsg = { text: 'Data perangkat & akun sudah sama.' }; renderAccount(); })
+          .catch(function (err) { accountMsg = { text: err.message, err: true }; renderAccount(); });
+      });
+      $('acc-out').addEventListener('click', signOutFlow);
+      return;
+    }
+    var signup = accountMode === 'signup', reset = accountMode === 'reset';
+    box.innerHTML =
+      '<div class="seg acc-switch" role="tablist">' +
+      '<label><input type="radio" name="acc-mode" value="signin"' + (!signup && !reset ? ' checked' : '') + '><span>Masuk</span></label>' +
+      '<label><input type="radio" name="acc-mode" value="signup"' + (signup ? ' checked' : '') + '><span>Buat akun</span></label></div>' +
+      '<form id="acc-form" class="acc-form" novalidate>' +
+      '<label class="field"><span>Email</span><input id="acc-email" type="email" autocomplete="email" required></label>' +
+      (reset ? '' : '<label class="field"><span>Password' + (signup ? ' (min. 8 karakter)' : '') + '</span><input id="acc-pass" type="password" minlength="8" autocomplete="' + (signup ? 'new-password' : 'current-password') + '" required></label>') +
+      '<button class="btn" type="submit">' + (reset ? 'Kirim tautan reset' : signup ? 'Buat akun' : 'Masuk') + '</button></form>' +
+      (signup ? '<p class="hint">Data yang sudah Anda isi di perangkat ini otomatis dipindahkan ke akun baru.</p>' : '') +
+      (!signup ? '<p class="small"><button type="button" class="linkish" id="acc-forgot">' + (reset ? 'Kembali ke masuk' : 'Lupa password?') + '</button></p>' : '') + note;
+    box.querySelectorAll('input[name="acc-mode"]').forEach(function (r) {
+      r.addEventListener('change', function () { accountMode = r.value; accountMsg = null; renderAccount(); });
+    });
+    var fg = $('acc-forgot');
+    if (fg) fg.addEventListener('click', function () { accountMode = reset ? 'signin' : 'reset'; accountMsg = null; renderAccount(); });
+    $('acc-form').addEventListener('submit', onAccountSubmit);
+  }
+
+  function localSaveOnly() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* abaikan */ }
+  }
+
+  function onAccountSubmit(e) {
+    e.preventDefault();
+    var email = $('acc-email').value.trim();
+    var pass = $('acc-pass') ? $('acc-pass').value : '';
+    if (!/^\S+@\S+\.\S+$/.test(email)) { accountMsg = { text: 'Tulis email yang valid.', err: true }; renderAccount(); $('acc-email').value = email; return; }
+    if (accountMode !== 'reset' && pass.length < 8) { accountMsg = { text: 'Password minimal 8 karakter.', err: true }; renderAccount(); $('acc-email').value = email; return; }
+    var btn = e.target.querySelector('button[type="submit"]');
+    btn.disabled = true; btn.textContent = 'Memproses…';
+    var done = function (m) { accountMsg = m; renderAccount(); if ($('acc-email')) $('acc-email').value = email; };
+    var p;
+    if (accountMode === 'reset') {
+      p = CL.resetPassword(email).then(function () { done({ text: 'Tautan reset password dikirim ke ' + email + '.' }); });
+    } else if (accountMode === 'signup') {
+      p = CL.signUp(email, pass).then(function (r) {
+        if (r.needsConfirm) { accountMode = 'signin'; done({ text: 'Akun dibuat. Buka email dari Lintasan untuk konfirmasi, lalu masuk di sini.' }); }
+        else return afterSignIn('Akun dibuat dan Anda sudah masuk.');
+      });
+    } else {
+      p = CL.signIn(email, pass).then(function () { return afterSignIn('Berhasil masuk.'); });
+    }
+    p.catch(function (err) { done({ text: err.message, err: true }); });
+  }
+
+  async function afterSignIn(text) {
+    accountMsg = { text: text };
+    try {
+      var m = await pullAndMerge();
+      if (m.source === 'remote') accountMsg = { text: text + ' Data dari akun Anda dimuat.' };
+      else if (m.source === 'merged') accountMsg = { text: text + ' Data perangkat ini digabung dengan akun.' };
+      else accountMsg = { text: text + ' Data perangkat ini disimpan ke akun.' };
+    } catch (err) {
+      accountMsg = { text: text + ' Tapi data belum tersinkron: ' + err.message, err: true };
+    }
+    afterLogChange([]);
+    localSaveOnly();
+    renderAll();
+    renderAccount();
+    toast(accountMsg.text);
+  }
+
+  async function signOutFlow() {
+    clearTimeout(pushTimer);
+    if (cloudStatus === 'saving' || cloudStatus === 'pending') { try { await CL.push(state); } catch (e) { /* tetap keluar */ } }
+    await CL.signOut();
+    try { localStorage.removeItem(KEY); localStorage.removeItem('lintasan.strava'); } catch (e) { /* abaikan */ }
+    state = sampleState();
+    cloudStatus = 'off'; cloudAt = null;
+    accountMode = 'signin'; accountMsg = { text: 'Anda sudah keluar. Data di perangkat ini dihapus; data Anda aman di akun.' };
+    renderAll(); renderSync(); renderAccount();
+  }
+
   // ---------- IMPOR & SINKRON ----------
   function importCtx() {
     var p = state.profile || {};
@@ -840,19 +1006,51 @@
   function renderAll() {
     $('sample-banner').hidden = !state.sample;
     renderSaveState();
+    renderAccount();
     renderToday();
     renderPlan();
     renderLog();
     renderProfile();
   }
 
+  /**
+   * Urutan startup: (1) balasan login Strava, (2) akun: pulihkan sesi & gabungkan data,
+   * (3) sinkron Strava bila jatuh tempo, (4) review mingguan dengan data terlengkap.
+   */
+  async function startup(hasCallback, stravaOn) {
+    var justConnected = false;
+    if (hasCallback) {
+      try {
+        var r = await ST.handleCallback();
+        if (r) { toast(r.msg); renderSync(r.ok ? null : r.msg, !r.ok); justConnected = r.ok; }
+      } catch (err) { renderSync(err.message, true); toast(err.message); }
+    }
+    if (CL && CL.enabled()) {
+      try {
+        var u = await CL.init(function (event) {
+          if (event === 'PASSWORD_RECOVERY') { accountMode = 'recovery'; show('account'); renderAccount(); }
+        });
+        if (u) await pullAndMerge();
+        if (/type=recovery/.test(location.hash)) { accountMode = 'recovery'; show('account'); }
+        else if (/access_token=/.test(location.hash) && u) { accountMsg = { text: 'Email terkonfirmasi. Anda sudah masuk.' }; show('account'); }
+      } catch (err) {
+        cloudStatus = 'pending';
+      }
+      renderAll();
+    }
+    if (ST && ST.supported() && ST.connected()) {
+      var last = ST.lastSync();
+      var due = justConnected || !last || Date.now() - new Date(last).getTime() > 30 * 60 * 1000;
+      if (due) await syncStrava(justConnected);
+    }
+    if (runWeeklyReview(false)) { save('Minggu baru: program minggu ini sudah disesuaikan dengan latihan Anda minggu lalu.'); renderAll(); }
+  }
+
   function init() {
     state = load() || sampleState();
     var stravaOn = ST && ST.supported() && ST.connected();
     var hasCallback = ST && ST.supported() && /[?&](code|error)=/.test(location.search);
-    // awal minggu baru: review minggu lalu & sesuaikan rencana.
-    // Bila Strava terhubung, review menunggu sinkron agar lari minggu lalu ikut terhitung.
-    if (!stravaOn && !hasCallback && runWeeklyReview(false) && !state.sample) save('Minggu baru: program minggu ini sudah disesuaikan dengan latihan Anda minggu lalu.');
+    // review mingguan berjalan di akhir startup(), setelah data akun & Strava masuk
 
     document.querySelectorAll('.tab').forEach(function (t) { t.addEventListener('click', function () { show(t.dataset.view); }); });
     document.addEventListener('click', function (e) {
@@ -888,6 +1086,7 @@
       if (!b) return;
       var gone = state.logs.find(function (l) { return l.id === b.dataset.del; });
       if (gone && gone.extId) state.ignoredExt = (state.ignoredExt || []).concat(gone.extId);
+      if (gone) state.deletedLogIds = (state.deletedLogIds || []).concat(gone.id); // agar tidak hidup lagi saat sinkron akun
       state.logs = state.logs.filter(function (l) { return l.id !== b.dataset.del; });
       afterLogChange([gone && gone.date]);
       save('Sesi dihapus.'); renderAll();
@@ -909,7 +1108,7 @@
     $('reset-no').addEventListener('click', function () { $('reset-confirm').hidden = true; });
     $('reset-yes').addEventListener('click', function () {
       state = emptyState(); save(); $('reset-confirm').hidden = true; renderAll();
-      $('data-msg').textContent = 'Semua data dihapus.';
+      $('data-msg').textContent = CL && CL.user() ? 'Semua data dihapus, termasuk di akun.' : 'Semua data dihapus.';
     });
 
     $('import-files').addEventListener('change', function (e) { onImportFiles(e.target.files); });
@@ -918,23 +1117,13 @@
     ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function () { drop.classList.remove('over'); }); });
     drop.addEventListener('drop', function (e) { e.preventDefault(); onImportFiles(e.dataTransfer.files); });
 
+    $('account-btn').addEventListener('click', function () { show('account'); });
+    $('sample-login').addEventListener('click', function () { accountMode = 'signin'; show('account'); });
+    window.addEventListener('online', function () { if (cloudStatus === 'pending') pushNow(); });
+
     renderAll();
     renderSync();
-    if (hasCallback) {
-      ST.handleCallback().then(function (r) {
-        if (!r) return;
-        toast(r.msg);
-        renderSync(r.ok ? null : r.msg, !r.ok);
-        if (r.ok) return syncStrava(true);
-      }).catch(function (err) { renderSync(err.message, true); toast(err.message); })
-        .then(function () { if (runWeeklyReview(false)) { save(); renderAll(); } });
-    } else if (stravaOn) {
-      var last = ST.lastSync();
-      var due = !last || Date.now() - new Date(last).getTime() > 30 * 60 * 1000;
-      (due ? syncStrava(false) : Promise.resolve(null)).then(function () {
-        if (runWeeklyReview(false)) { save('Minggu baru: program minggu ini sudah disesuaikan dengan latihan Anda minggu lalu.'); renderAll(); }
-      });
-    }
+    startup(hasCallback, stravaOn);
     renderLibrary([]);
     show((location.hash || '#today').slice(1));
   }

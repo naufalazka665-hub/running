@@ -36,6 +36,24 @@ Sisa rencana dihitung ulang dari volume baru (naik maks 10%/minggu, fase & mingg
 - Hanya aktivitas lari yang diimpor. Duplikat (impor ulang, lari yang sama dari dua sumber, atau sudah dicatat manual) dilewati, dan aktivitas yang Anda hapus tidak diimpor ulang.
 - RPE ditaksir dari HR rata-rata (%HRR) atau pace terhadap zona VDOT, ditandai ≈, dan bisa dikoreksi langsung di tabel.
 
+### Akun pelari (login & sinkron cloud)
+Pelari bisa membuat akun (email + password) agar profil, rencana, log, dan cek kesiapan tersimpan di cloud dan muncul di semua perangkat.
+
+- **Local-first:** data tetap tersimpan di browser (cepat, bisa offline), lalu disalin otomatis ke akun ±1 detik setelah setiap perubahan. Kalau sedang offline, sinkron diulang saat koneksi kembali.
+- **Gabung data saat masuk:** perangkat baru langsung memakai data akun. Kalau perangkat ini dan akun sama-sama berisi data, log digabung, sedangkan profil & rencana diambil dari versi terbaru. Log yang dihapus tidak hidup lagi.
+- **Keluar** menghapus data dari perangkat itu (aman di akun). Cocok untuk perangkat bersama.
+- **Keamanan:** setiap pelari hanya bisa membaca & menulis datanya sendiri (Row Level Security di database). Password dikelola Supabase Auth, tidak pernah disimpan oleh Lintasan.
+- Token Strava sengaja **tidak** ikut ke akun (tetap per perangkat), karena berisi Client Secret.
+
+**Setup (sekali, ±10 menit, gratis):**
+1. Buat proyek di <https://supabase.com> → *New project* (pilih region Singapore untuk Indonesia).
+2. *SQL Editor* → tempel isi [`supabase/schema.sql`](supabase/schema.sql) → *Run*.
+3. *Authentication → URL Configuration*: isi *Site URL* dengan `https://naufalazka665-hub.github.io/running/`, lalu tambahkan URL yang sama (dan `http://localhost:8080/` untuk uji lokal) di *Redirect URLs*.
+4. *Authentication → Sign In / Providers → Email*: pastikan aktif. "Confirm email" disarankan tetap aktif.
+5. *Project Settings → API*: salin **Project URL** dan **anon public key** ke `js/config.js`, lalu commit. Anon key memang publik; **jangan** pernah memakai `service_role` key di sini.
+
+Catatan: layanan email bawaan Supabase dibatasi beberapa email per jam. Kalau pengguna sudah banyak, pasang SMTP sendiri (*Authentication → SMTP Settings*). Nama menu di dashboard Supabase bisa sedikit berbeda antar versi.
+
 ### Aturan coach yang diterapkan
 - Volume naik maks ~10%/minggu, minggu ringan (−20%) tiap minggu ke-4.
 - Sesi keras dibatasi: T ≤10%, I ≤8%, R ≤5% volume mingguan (Daniels).
@@ -51,7 +69,7 @@ Buka `index.html` langsung di browser, atau:
 
 ```bash
 npm start            # http://localhost:8080 (perlu untuk sinkron Strava lokal)
-npm test             # 34 unit test (rumus VDOT vs tabel Daniels, generator rencana, rencana adaptif, coach, importer, pustaka)
+npm test             # 40 unit test (rumus VDOT vs tabel Daniels, generator rencana, rencana adaptif, coach, importer, sinkron akun, pustaka)
 ```
 
 Bisa di-deploy apa adanya ke GitHub Pages (Settings → Pages → branch, folder root).
@@ -69,6 +87,9 @@ js/coach.js         readiness, penyesuaian sesi, analisis log
 js/knowledge.js     pustaka materi + pencarian
 js/importers.js     parser Strava/Garmin CSV, Strava API, GPX, TCX + taksiran RPE & dedup
 js/strava.js        OAuth & sinkron Strava dari browser
+js/sync.js          akun (Supabase Auth) & sinkron cloud + logika gabung data
+js/config.js        URL & anon key Supabase (kosong = tanpa akun)
+supabase/schema.sql tabel runner_data + Row Level Security
 js/app.js           UI & penyimpanan
 tests/              node:test
 ```
