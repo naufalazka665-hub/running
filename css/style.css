@@ -264,3 +264,23 @@ td.num, th.num { text-align: right; }
 .adapt-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .wk-copy { margin-left: auto; }
 #copy-fallback { font: 0.85rem/1.5 var(--f-mono); }
+
+/* ---------- Sinkron & impor ---------- */
+.sync-col { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.steps { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.steps code, .sync-col code { font-family: var(--f-mono); background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; overflow-wrap: anywhere; }
+.drop {
+  display: grid; gap: 4px; place-items: center; text-align: center; cursor: pointer;
+  border: 2px dashed var(--line); border-radius: var(--r); padding: 22px 16px; background: var(--surface-2);
+}
+.drop:hover, .drop.over { border-color: var(--track); background: var(--track-soft); }
+.check { display: flex; gap: 8px; align-items: center; }
+.check input { width: auto; }
+.err { color: var(--hard); font-weight: 600; }
+details ul { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 6px; }
+.rpe-edit { display: inline-flex; align-items: center; gap: 2px; border-radius: 999px; padding: 0 2px 0 8px; font-weight: 700; }
+.rpe-edit select { width: auto; padding: 2px 4px; border: 0; background: transparent; font: inherit; color: inherit; }
+.rpe-edit.green { background: var(--easy-soft); color: var(--easy); }
+.rpe-edit.amber { background: var(--mod-soft); color: var(--mod); }
+.rpe-edit.red { background: var(--hard-soft); color: var(--hard); }
+.src { font-size: 0.7rem; padding: 1px 7px; }

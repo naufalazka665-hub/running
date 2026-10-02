@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx creator="Garmin Connect" version="1.1" xmlns:ns3="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
+ <trk><name>GBK pagi</name><type>running</type><trkseg>
+  <trkpt lat="-6.2180" lon="106.8020"><time>2026-09-27T23:00:00Z</time><extensions><ns3:TrackPointExtension><ns3:hr>140</ns3:hr></ns3:TrackPointExtension></extensions></trkpt>
+  <trkpt lat="-6.2270" lon="106.8020"><time>2026-09-27T23:06:00Z</time><extensions><ns3:TrackPointExtension><ns3:hr>146</ns3:hr></ns3:TrackPointExtension></extensions></trkpt>
+ </trkseg></trk>
+</gpx>

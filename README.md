@@ -24,6 +24,18 @@ Semua data tersimpan otomatis (indikator "Tersimpan otomatis" di kanan atas). Sa
 
 Sisa rencana dihitung ulang dari volume baru (naik maks 10%/minggu, fase & minggu ringan tetap, tanggal lomba tetap). Minggu yang sudah lewat tidak diubah. Bila Anda baru mencatat sesi minggu lalu setelah review berjalan, review diulang otomatis. Program tiap minggu bisa disalin sebagai teks (catatan/WhatsApp).
 
+### Impor otomatis Strava & Garmin
+- **Strava (otomatis):** hubungkan sekali di tab Log, lalu setiap kali aplikasi dibuka, lari baru disinkronkan sebelum review mingguan berjalan. Garmin, Coros, Suunto, dan Apple Watch ikut masuk bila jamnya tersinkron ke Strava.
+  1. Buat aplikasi di <https://www.strava.com/settings/api>.
+  2. Isi *Authorization Callback Domain* dengan domain tempat Lintasan di-host (mis. `username.github.io` atau `localhost`).
+  3. Masukkan Client ID & Client Secret di tab Log → Hubungkan Strava.
+  - Tanpa server, Client Secret disimpan di browser Anda. Ini wajar untuk pemakaian pribadi; untuk aplikasi multi-pengguna, pindahkan penukaran token ke server.
+  - Hanya berjalan di halaman yang di-host (GitHub Pages/localhost), tidak dari file yang dibuka langsung.
+- **Garmin:** API resmi Garmin Connect hanya untuk mitra bisnis. Jalur yang tersedia: sambungkan Garmin Connect ke Strava (otomatis), atau impor *Activities.csv*, TCX, atau GPX dari Garmin Connect.
+- **Impor file:** Garmin Activities.csv, Strava activities.csv (ekspor akun), GPX, TCX. File .FIT belum didukung.
+- Hanya aktivitas lari yang diimpor. Duplikat (impor ulang, lari yang sama dari dua sumber, atau sudah dicatat manual) dilewati, dan aktivitas yang Anda hapus tidak diimpor ulang.
+- RPE ditaksir dari HR rata-rata (%HRR) atau pace terhadap zona VDOT, ditandai ≈, dan bisa dikoreksi langsung di tabel.
+
 ### Aturan coach yang diterapkan
 - Volume naik maks ~10%/minggu, minggu ringan (−20%) tiap minggu ke-4.
 - Sesi keras dibatasi: T ≤10%, I ≤8%, R ≤5% volume mingguan (Daniels).
@@ -38,8 +50,8 @@ Sisa rencana dihitung ulang dari volume baru (naik maks 10%/minggu, fase & mingg
 Buka `index.html` langsung di browser, atau:
 
 ```bash
-npm start            # http://localhost:8080
-npm test             # 27 unit test (rumus VDOT vs tabel Daniels, generator rencana, rencana adaptif, coach, pustaka)
+npm start            # http://localhost:8080 (perlu untuk sinkron Strava lokal)
+npm test             # 34 unit test (rumus VDOT vs tabel Daniels, generator rencana, rencana adaptif, coach, importer, pustaka)
 ```
 
 Bisa di-deploy apa adanya ke GitHub Pages (Settings → Pages → branch, folder root).
@@ -55,6 +67,8 @@ js/science.js       rumus murni: VDOT, pace, HR, sRPE, monotony, ACWR
 js/plan.js          generator rencana berperiodisasi
 js/coach.js         readiness, penyesuaian sesi, analisis log
 js/knowledge.js     pustaka materi + pencarian
+js/importers.js     parser Strava/Garmin CSV, Strava API, GPX, TCX + taksiran RPE & dedup
+js/strava.js        OAuth & sinkron Strava dari browser
 js/app.js           UI & penyimpanan
 tests/              node:test
 ```

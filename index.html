@@ -165,6 +165,33 @@
       <div><p class="label">Session-RPE · Foster 2001</p><h2>Log latihan</h2></div>
       <p class="muted">Beban sesi = menit × RPE (0–10). Isi RPE ±30 menit setelah lari, untuk keseluruhan sesi.</p>
     </div>
+    <div class="panel" id="sync-panel">
+      <div class="panel-head"><h3>Sinkron otomatis</h3><span class="hint">Aktivitas lari masuk ke log tanpa input manual</span></div>
+      <div class="grid-2">
+        <div class="sync-col">
+          <p class="label">Strava (termasuk Garmin, Coros, Suunto, Apple Watch via Strava)</p>
+          <div id="strava-box"></div>
+        </div>
+        <div class="sync-col">
+          <p class="label">Impor file</p>
+          <label class="drop" id="import-drop" for="import-files">
+            <b>Pilih atau tarik file ke sini</b>
+            <span class="small muted">Garmin Connect: Activities.csv, TCX, GPX · Strava: activities.csv dari ekspor akun</span>
+          </label>
+          <input id="import-files" type="file" accept=".csv,.gpx,.tcx,.fit" multiple hidden>
+          <label class="check small"><input type="checkbox" id="imp-miles"> Jarak di CSV Garmin dalam mil</label>
+          <p class="hint" id="import-msg"></p>
+          <details class="small"><summary>Cara menghubungkan Garmin</summary>
+            <ul>
+              <li><b>Otomatis (disarankan):</b> di aplikasi Garmin Connect buka Pengaturan → Aplikasi Terhubung → Strava. Semua lari dari jam Garmin akan masuk ke Strava, lalu ke Lintasan.</li>
+              <li><b>Manual:</b> garminconnect.com → Aktivitas → Semua Aktivitas → Ekspor CSV, lalu impor di sini.</li>
+              <li>API resmi Garmin Connect hanya dibuka untuk mitra bisnis yang disetujui Garmin, jadi tidak bisa dipakai langsung oleh aplikasi pribadi.</li>
+            </ul>
+          </details>
+        </div>
+      </div>
+      <p class="hint">RPE untuk aktivitas impor ditaksir dari HR rata-rata (atau pace bila tanpa HR) dan ditandai ≈. Koreksi di tabel bila terasa berbeda; RPE yang Anda isi lebih akurat daripada taksiran.</p>
+    </div>
     <div class="grid-2">
       <div class="panel">
         <h3>Catat sesi</h3>
@@ -284,6 +311,8 @@
 <script src="js/plan.js"></script>
 <script src="js/coach.js"></script>
 <script src="js/knowledge.js"></script>
+<script src="js/importers.js"></script>
+<script src="js/strava.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

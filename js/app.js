@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var S = window.Science, P = window.Plan, C = window.Coach, K = window.Knowledge;
+  var S = window.Science, P = window.Plan, C = window.Coach, K = window.Knowledge, I = window.Importers, ST = window.Strava;
   var KEY = 'lintasan.v1';
   var $ = function (id) { return document.getElementById(id); };
   var TODAY = S.dayKey(new Date());
@@ -10,6 +10,7 @@
   var TYPE_LABEL = { E: 'Easy', L: 'Long run', Q: 'Kualitas', RACE: 'Lomba', R: 'Istirahat', X: 'Cross-training' };
   var PHASE_LABEL = { base: 'Base', build: 'Build', peak: 'Peak', taper: 'Taper' };
   var PHASE_COLOR = { base: 'var(--easy)', build: 'var(--track)', peak: 'var(--mod)', taper: 'var(--hard)' };
+  var SOURCE_LABEL = { strava: 'Strava', garmin: 'Garmin', file: 'File' };
   var RPE_DESC = ['Istirahat', 'Sangat, sangat ringan', 'Ringan', 'Sedang', 'Agak berat', 'Berat', 'Berat', 'Sangat berat', 'Sangat berat', 'Hampir maksimal', 'Maksimal'];
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
   var DAYS_LONG = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -550,8 +551,10 @@
       logs.slice(0, 120).map(function (l) {
         var pace = l.km > 0 ? S.fmtPace(l.minutes * 60 / l.km) : '–';
         var rc = l.rpe >= 7 ? 'red' : l.rpe >= 5 ? 'amber' : 'green';
-        return '<tr><td>' + fmtDate(l.date) + '</td><td>' + esc(TYPE_LABEL[l.type] || l.type) + '</td><td class="num mono">' + num(l.km) + '</td><td class="num mono">' + l.minutes + '</td><td class="num mono">' + pace + '</td>' +
-          '<td class="num"><span class="pill ' + rc + '">' + l.rpe + '</span></td><td class="num mono">' + S.sessionLoad(l.minutes, l.rpe) + '</td><td>' + esc(l.notes || '') + '</td>' +
+        return '<tr><td>' + fmtDate(l.date) + '</td><td>' + esc(TYPE_LABEL[l.type] || l.type) + '</td><td class="num mono">' + num(l.km) + '</td><td class="num mono">' + Math.round(l.minutes) + '</td><td class="num mono">' + pace + '</td>' +
+          '<td class="num"><label class="rpe-edit ' + rc + '" title="' + (l.rpeEst ? 'RPE ditaksir dari ' + (l.hr ? 'HR' : 'pace') + '. Koreksi bila tidak sesuai.' : 'RPE sesi') + '">' + (l.rpeEst ? '≈' : '') +
+          '<select data-rpe="' + esc(l.id) + '" aria-label="RPE sesi ' + fmtDate(l.date) + '">' + RPE_DESC.map(function (_, v) { return '<option' + (v === Number(l.rpe) ? ' selected' : '') + '>' + v + '</option>'; }).join('') + '</select></label></td>' +
+          '<td class="num mono">' + S.sessionLoad(l.minutes, l.rpe) + '</td><td>' + (l.source ? '<span class="pill grey src">' + esc(SOURCE_LABEL[l.source] || l.source) + '</span> ' : '') + esc(l.notes || '') + '</td>' +
           '<td><button type="button" class="btn danger sm" data-del="' + esc(l.id) + '" aria-label="Hapus sesi ' + fmtDate(l.date) + '">Hapus</button></td></tr>';
       }).join('') + '</tbody>';
   }
@@ -568,15 +571,136 @@
     });
     leaveSample();
     var msg = 'Sesi tersimpan.';
-    // sesi terlambat dicatat untuk minggu yang sudah direview: review ulang otomatis
-    var wi = weekIdxOf(date);
-    if (state.plan && wi >= 0 && state.plan.reviews && state.plan.reviews[String(state.plan.weeks[wi].index)] && wi === weekIdxOf(TODAY) - 1) {
-      runWeeklyReview(true);
-      msg = 'Sesi tersimpan. Review minggu ' + state.plan.weeks[wi].index + ' diperbarui.';
-    }
+    if (afterLogChange([date])) msg = 'Sesi tersimpan. Review minggu lalu diperbarui.';
     save(msg);
     $('l-km').value = ''; $('l-min').value = ''; $('l-time').value = ''; $('l-hr').value = ''; $('l-notes').value = '';
     renderAll();
+  }
+
+  /**
+   * Setelah log berubah: bila ada tanggal di minggu lalu yang sudah direview, review ulang.
+   * Lalu jalankan review normal (bila minggu baru belum direview). true bila review berubah.
+   */
+  function afterLogChange(dates) {
+    var prevIdx = weekIdxOf(TODAY) - 1;
+    var touched = state.plan && prevIdx >= 0 && (dates || []).some(function (d) { return d && weekIdxOf(d) === prevIdx; });
+    var key = touched ? String(state.plan.weeks[prevIdx].index) : null;
+    if (touched && state.plan.reviews && state.plan.reviews[key]) { runWeeklyReview(true); return true; }
+    return !!runWeeklyReview(false);
+  }
+
+  // ---------- IMPOR & SINKRON ----------
+  function importCtx() {
+    var p = state.profile || {};
+    return {
+      profile: { age: p.age, rest: p.rest, max: p.max, vdot: profileVdot(p) },
+      plannedTypeOn: function (date) { var h = findDay(date); return h ? h.day.type : null; },
+      uid: uid,
+      ignore: state.ignoredExt || []
+    };
+  }
+
+  /** Gabungkan aktivitas mentah ke log, review ulang, simpan. Mengembalikan ringkasan teks. */
+  function applyImport(raw, label) {
+    if (state.sample) {
+      // jangan campur aktivitas asli dengan data contoh
+      state = emptyState();
+    }
+    var res = I.merge(state.logs, raw, importCtx());
+    state.logs = res.logs;
+    var reviewed = afterLogChange(res.added.map(function (l) { return l.date; }));
+    var parts = [res.added.length + ' lari baru dari ' + label];
+    if (res.duplicate) parts.push(res.duplicate + ' sudah ada');
+    if (res.notRun) parts.push(res.notRun + ' bukan lari');
+    if (res.invalid) parts.push(res.invalid + ' tidak valid');
+    var msg = parts.join(' · ') + '.' + (reviewed ? ' Review mingguan diperbarui.' : '');
+    save(msg);
+    renderAll();
+    return msg;
+  }
+
+  var syncing = false;
+  async function syncStrava(manual) {
+    if (syncing || !ST || !ST.connected()) return null;
+    syncing = true;
+    renderSync('Menyinkronkan Strava…');
+    try {
+      var last = ST.lastSync();
+      // sinkron pertama: sejak awal rencana (atau 8 minggu); berikutnya mundur 2 hari untuk unggahan terlambat
+      var since = last ? new Date(last).getTime() / 1000 - 2 * 86400
+        : (state.plan && state.plan.weeks[0].days[0].date ? new Date(state.plan.weeks[0].days[0].date + 'T00:00:00').getTime() / 1000 : Date.now() / 1000 - 56 * 86400);
+      var acts = await ST.fetchActivities(since);
+      ST.setLastSync(new Date().toISOString());
+      var msg = applyImport(acts.map(I.fromStravaApi), 'Strava');
+      renderSync(msg);
+      return msg;
+    } catch (err) {
+      var m = /Failed to fetch|NetworkError|Load failed/i.test(err.message)
+        ? 'Tidak bisa menghubungi Strava dari halaman ini (jaringan atau halaman tidak di-host). Gunakan versi GitHub Pages, atau impor file.'
+        : err.message;
+      renderSync(m, true);
+      if (manual) toast(m);
+      return null;
+    } finally {
+      syncing = false;
+    }
+  }
+
+  function renderSync(status, isErr) {
+    var box = $('strava-box');
+    if (!box || !ST) return;
+    if (!ST.supported()) {
+      box.innerHTML = '<p class="muted small">Sinkron Strava butuh halaman yang di-host (GitHub Pages atau localhost), bukan file yang dibuka langsung. Untuk sekarang gunakan impor file di sebelah.</p>';
+      return;
+    }
+    if (!ST.connected()) {
+      box.innerHTML =
+        '<ol class="steps small">' +
+        '<li>Buka <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a> dan buat aplikasi (nama bebas, mis. "Lintasan pribadi").</li>' +
+        '<li>Isi <b>Authorization Callback Domain</b> dengan <code>' + esc(location.hostname) + '</code>.</li>' +
+        '<li>Salin <b>Client ID</b> dan <b>Client Secret</b> ke sini, lalu hubungkan.</li></ol>' +
+        '<form id="strava-form" class="fields">' +
+        '<label class="field"><span>Client ID</span><input id="s-id" inputmode="numeric" required value="' + esc(ST.clientId()) + '"></label>' +
+        '<label class="field"><span>Client Secret</span><input id="s-secret" type="password" autocomplete="off" required></label>' +
+        '<button class="btn" type="submit">Hubungkan Strava</button></form>' +
+        '<p class="hint">Secret disimpan hanya di browser ini dan hanya dipakai untuk menukar token dengan Strava. Aplikasi Strava baru hanya bisa mengakses akun pemiliknya.</p>' +
+        (status ? '<p class="small ' + (isErr ? 'err' : 'muted') + '">' + esc(status) + '</p>' : '');
+      $('strava-form').addEventListener('submit', function (e) {
+        e.preventDefault();
+        ST.authorize($('s-id').value, $('s-secret').value);
+      });
+      return;
+    }
+    var a = ST.athlete(), last = ST.lastSync();
+    box.innerHTML = '<div class="row"><span class="pill green">Terhubung</span><span class="small">' + esc(a && a.name ? a.name : 'Akun Strava') + '</span></div>' +
+      '<p class="small muted">Sinkron otomatis setiap aplikasi dibuka. Terakhir: ' + (last ? fmtDate(S.dayKey(new Date(last))) + ', ' + ('0' + new Date(last).getHours()).slice(-2) + ':' + ('0' + new Date(last).getMinutes()).slice(-2) : 'belum pernah') + '.</p>' +
+      (status ? '<p class="small ' + (isErr ? 'err' : '') + '">' + esc(status) + '</p>' : '') +
+      '<div class="row"><button type="button" class="btn sm" id="strava-sync"' + (syncing ? ' disabled' : '') + '>Sinkron sekarang</button>' +
+      '<button type="button" class="btn ghost sm" id="strava-off">Putuskan</button></div>';
+    $('strava-sync').addEventListener('click', function () { syncStrava(true).then(function (m) { if (m) toast(m); }); });
+    $('strava-off').addEventListener('click', function () { ST.disconnect(); renderSync('Strava diputus. Log yang sudah diimpor tetap ada.'); });
+  }
+
+  function onImportFiles(files) {
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    var raw = [], errors = [];
+    var pending = list.length;
+    list.forEach(function (f) {
+      var fr = new FileReader();
+      fr.onload = function () {
+        try { raw = raw.concat(I.parseFile(f.name, String(fr.result), { miles: $('imp-miles').checked })); }
+        catch (err) { errors.push(err.message); }
+        if (--pending === 0) {
+          var msg = raw.length ? applyImport(raw, list.length === 1 ? list[0].name : list.length + ' file') : 'Tidak ada aktivitas yang terbaca.';
+          $('import-msg').textContent = msg + (errors.length ? ' ' + errors.join(' ') : '');
+          toast(msg);
+          $('import-files').value = '';
+        }
+      };
+      fr.onerror = function () { errors.push('Gagal membaca ' + f.name); if (--pending === 0) $('import-msg').textContent = errors.join(' '); };
+      fr.readAsText(f);
+    });
   }
 
   // ---------- PROFIL ----------
@@ -724,8 +848,11 @@
 
   function init() {
     state = load() || sampleState();
-    // awal minggu baru: review minggu lalu & sesuaikan rencana
-    if (runWeeklyReview(false) && !state.sample) save('Minggu baru: program minggu ini sudah disesuaikan dengan latihan Anda minggu lalu.');
+    var stravaOn = ST && ST.supported() && ST.connected();
+    var hasCallback = ST && ST.supported() && /[?&](code|error)=/.test(location.search);
+    // awal minggu baru: review minggu lalu & sesuaikan rencana.
+    // Bila Strava terhubung, review menunggu sinkron agar lari minggu lalu ikut terhitung.
+    if (!stravaOn && !hasCallback && runWeeklyReview(false) && !state.sample) save('Minggu baru: program minggu ini sudah disesuaikan dengan latihan Anda minggu lalu.');
 
     document.querySelectorAll('.tab').forEach(function (t) { t.addEventListener('click', function () { show(t.dataset.view); }); });
     document.addEventListener('click', function (e) {
@@ -759,8 +886,20 @@
     $('log-table').addEventListener('click', function (e) {
       var b = e.target.closest('[data-del]');
       if (!b) return;
+      var gone = state.logs.find(function (l) { return l.id === b.dataset.del; });
+      if (gone && gone.extId) state.ignoredExt = (state.ignoredExt || []).concat(gone.extId);
       state.logs = state.logs.filter(function (l) { return l.id !== b.dataset.del; });
+      afterLogChange([gone && gone.date]);
       save('Sesi dihapus.'); renderAll();
+    });
+    $('log-table').addEventListener('change', function (e) {
+      var sel = e.target.closest('[data-rpe]');
+      if (!sel) return;
+      var l = state.logs.find(function (x) { return x.id === sel.dataset.rpe; });
+      if (!l) return;
+      l.rpe = Number(sel.value); l.rpeEst = false;
+      afterLogChange([l.date]);
+      save('RPE diperbarui.'); renderAll();
     });
     $('profile-form').addEventListener('submit', onProfileSubmit);
     $('ask-form').addEventListener('submit', onAsk);
@@ -773,7 +912,29 @@
       $('data-msg').textContent = 'Semua data dihapus.';
     });
 
+    $('import-files').addEventListener('change', function (e) { onImportFiles(e.target.files); });
+    var drop = $('import-drop');
+    ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
+    ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function () { drop.classList.remove('over'); }); });
+    drop.addEventListener('drop', function (e) { e.preventDefault(); onImportFiles(e.dataTransfer.files); });
+
     renderAll();
+    renderSync();
+    if (hasCallback) {
+      ST.handleCallback().then(function (r) {
+        if (!r) return;
+        toast(r.msg);
+        renderSync(r.ok ? null : r.msg, !r.ok);
+        if (r.ok) return syncStrava(true);
+      }).catch(function (err) { renderSync(err.message, true); toast(err.message); })
+        .then(function () { if (runWeeklyReview(false)) { save(); renderAll(); } });
+    } else if (stravaOn) {
+      var last = ST.lastSync();
+      var due = !last || Date.now() - new Date(last).getTime() > 30 * 60 * 1000;
+      (due ? syncStrava(false) : Promise.resolve(null)).then(function () {
+        if (runWeeklyReview(false)) { save('Minggu baru: program minggu ini sudah disesuaikan dengan latihan Anda minggu lalu.'); renderAll(); }
+      });
+    }
     renderLibrary([]);
     show((location.hash || '#today').slice(1));
   }
