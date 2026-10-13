@@ -69,6 +69,20 @@ Pelari bisa membuat akun (email + password) agar profil, rencana, log, dan cek k
 
 Catatan: layanan email bawaan Supabase dibatasi beberapa email per jam. Kalau pengguna sudah banyak, pasang SMTP sendiri (*Authentication → SMTP Settings*). Nama menu di dashboard Supabase bisa sedikit berbeda antar versi.
 
+### Coach AI (Claude)
+Tab **Coach AI** adalah pelatih yang bisa diajak ngobrol. Coach menjawab berdasarkan data pelari dan pustaka sains Lintasan.
+
+- **Model:** Claude Opus 5.5 (`claude-opus-5-5`, effort `medium`) dengan `fallbacks: "default"`: bila sebuah permintaan ditolak classifier keamanan, API mencoba ulang di model fallback yang direkomendasikan Anthropic.
+- **Konteks yang dikirim saat bertanya:** profil, VDOT & pace, rencana dan jadwal minggu ini (setelah penyesuaian), log 21 hari, beban & distribusi intensitas, cek kesiapan hari ini, dan review mingguan terakhir. Tidak ada email/ID akun di dalamnya.
+- **Pustaka sains** (`js/knowledge.js`) disalin ke function oleh `npm run build:coach` dan di-cache (prompt caching), sehingga coach dan pustaka di aplikasi selalu sama. `npm test` gagal bila salinannya usang.
+- **Arsitektur:** browser → Supabase Edge Function `coach-chat` (`supabase/functions/coach-chat/`) → Claude API. Kunci API hanya di server. Hanya pelari yang login yang bisa bertanya.
+- **Kuota:** 30 pesan/pelari/hari (atur lewat secret `COACH_DAILY_LIMIT`), dicatat atomik di tabel `coach_usage` (`supabase/coach_quota.sql`).
+- **Keselamatan:** coach diminta tidak mendiagnosis dan merujuk ke tenaga medis untuk tanda bahaya. Riwayat percakapan hanya disimpan di perangkat dan dihapus saat keluar.
+
+**Mengaktifkan:** buat API key di <https://console.anthropic.com> (butuh saldo/billing), lalu di Supabase buka *Edge Functions → Secrets*, tambah `ANTHROPIC_API_KEY`. Function membaca secret saat dipanggil, jadi tidak perlu deploy ulang.
+
+**Deploy ulang function** setelah mengubah pustaka atau kode function: `npm run build:coach`, lalu deploy `supabase/functions/coach-chat` (Supabase CLI: `supabase functions deploy coach-chat`).
+
 ### Aturan coach yang diterapkan
 - Volume naik maks ~10%/minggu, minggu ringan (−20%) tiap minggu ke-4.
 - Sesi keras dibatasi: T ≤10%, I ≤8%, R ≤5% volume mingguan (Daniels).
@@ -102,9 +116,12 @@ js/coach.js         readiness, penyesuaian sesi, analisis log
 js/knowledge.js     pustaka materi + pencarian
 js/importers.js     parser Strava/Garmin CSV, Strava API, GPX, TCX + taksiran RPE & dedup
 js/strava.js        OAuth & sinkron Strava dari browser
-js/sync.js          akun (Supabase Auth) & sinkron cloud + logika gabung data
+js/sync.js          akun (Supabase Auth), sinkron cloud, logika gabung data, panggilan Coach AI
 js/config.js        URL & anon key Supabase (kosong = tanpa akun)
 supabase/schema.sql tabel runner_data + Row Level Security
+supabase/coach_quota.sql  kuota harian Coach AI
+supabase/functions/coach-chat/  Edge Function Coach AI (Claude)
+scripts/build-coach-knowledge.js  salin pustaka sains ke function
 js/app.js           UI & penyimpanan
 tests/              node:test
 ```

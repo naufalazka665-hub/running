@@ -4,7 +4,8 @@
   "private": true,
   "description": "Perencana latihan & coach lari berbasis sport science (situs statis, tanpa build).",
   "scripts": {
-    "test": "TZ=Asia/Jakarta node --test tests/*.test.js",
-    "start": "python3 -m http.server 8080"
+    "test": "node scripts/build-coach-knowledge.js --check && TZ=Asia/Jakarta node --test tests/*.test.js",
+    "start": "python3 -m http.server 8080",
+    "build:coach": "node scripts/build-coach-knowledge.js"
   }
 }

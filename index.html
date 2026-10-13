@@ -16,6 +16,7 @@
     <div class="brand"><span class="brand-name">Lintasan</span><span class="brand-sub">Run coach berbasis sport science</span></div>
     <nav class="tabs" role="tablist" aria-label="Bagian">
       <button class="tab" role="tab" id="tab-today" data-view="today" aria-selected="true">Hari ini</button>
+      <button class="tab tab-ai" role="tab" id="tab-coach" data-view="coach" aria-selected="false">Coach AI</button>
       <button class="tab" role="tab" id="tab-plan" data-view="plan" aria-selected="false">Rencana</button>
       <button class="tab" role="tab" id="tab-log" data-view="log" aria-selected="false">Log</button>
       <button class="tab" role="tab" id="tab-profile" data-view="profile" aria-selected="false">Profil &amp; zona</button>
@@ -317,6 +318,31 @@
       <div class="answer" id="answer"></div>
     </div>
     <div class="topics" id="topics"></div>
+  </section>
+
+  <!-- ================= COACH AI ================= -->
+  <section class="view" id="view-coach" role="tabpanel" aria-labelledby="tab-coach" hidden>
+    <div class="view-head">
+      <div><p class="label">Claude · berbasis pustaka sains &amp; data Anda</p><h2>Coach AI</h2></div>
+      <p class="muted">Tanya apa saja tentang latihan Anda. Coach membaca profil, jadwal minggu ini, log 3 minggu terakhir, cek kesiapan, dan review mingguan, lalu menjawab berdasarkan pustaka sains Lintasan.</p>
+    </div>
+    <div class="coach-wrap">
+      <div class="panel chat">
+        <div class="chat-log" id="chat-log" aria-live="polite"></div>
+        <div class="chips" id="chat-suggest"></div>
+        <form id="chat-form" class="chat-form">
+          <label for="chat-input" class="sr-only">Pertanyaan untuk coach</label>
+          <textarea id="chat-input" rows="2" maxlength="2000" placeholder="Contoh: Kaki saya pegal setelah interval kemarin, apa yang sebaiknya saya lakukan hari ini?"></textarea>
+          <button class="btn" type="submit" id="chat-send">Kirim</button>
+        </form>
+        <div class="row chat-foot"><span class="hint" id="chat-quota"></span><button type="button" class="linkish small" id="chat-clear">Mulai percakapan baru</button></div>
+      </div>
+      <aside class="panel coach-side">
+        <h3>Yang dilihat coach</h3>
+        <ul class="small" id="coach-sees"></ul>
+        <p class="hint">Data dikirim hanya saat Anda bertanya, tidak disimpan oleh server Lintasan. Coach AI bukan dokter: untuk nyeri tajam, nyeri dada, pingsan, atau demam, berhenti berlatih dan periksakan diri.</p>
+      </aside>
+    </div>
   </section>
 
   <!-- ================= AKUN ================= -->

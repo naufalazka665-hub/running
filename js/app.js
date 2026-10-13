@@ -76,7 +76,8 @@
     if (!state.readiness) state.readiness = {};
     if (!state.logs) state.logs = [];
     try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* abaikan */ }
-    if (!remote || m.source !== 'remote') await pushNow();
+    // data contoh tidak pernah diunggah ke akun
+    if ((!remote || m.source !== 'remote') && !state.sample) await pushNow();
     else { cloudStatus = 'synced'; cloudAt = new Date(); }
     return m;
   }
@@ -160,7 +161,7 @@
   function emptyState() { return { profile: null, plan: null, logs: [], readiness: {}, sample: false, ignoredExt: [], deletedLogIds: [] }; }
 
   // ---------- Navigasi ----------
-  var VIEWS = ['today', 'plan', 'log', 'profile', 'library', 'account'];
+  var VIEWS = ['today', 'coach', 'plan', 'log', 'profile', 'library', 'account'];
   function show(view) {
     if (VIEWS.indexOf(view) < 0) view = 'today';
     VIEWS.forEach(function (v) {
@@ -423,7 +424,8 @@
         '<p class="session-desc">' + esc(d.desc) + '</p>' +
         (isDone ? '<p class="advice">Sudah tercatat: ' + num(d.log.km) + ' km, ' + Math.round(d.log.minutes) + ' mnt, RPE ' + d.log.rpe + '. Pulihkan dengan baik.</p>'
           : d.movedFrom ? '<p class="advice">Dipindah ke hari ini dari ' + DAYS_LONG[new Date(d.movedFrom + 'T12:00:00').getDay()] + ' mengikuti log Anda.</p>' + (adj ? '<p class="advice">' + esc(adj.advice) + '</p>' : '')
-          : adj ? '<p class="advice">' + esc(adj.advice) + '</p>' : '<p class="small" style="opacity:.85">Isi cek kesiapan untuk penyesuaian otomatis.</p>');
+          : adj ? '<p class="advice">' + esc(adj.advice) + '</p>' : '<p class="small" style="opacity:.85">Isi cek kesiapan untuk penyesuaian otomatis.</p>') +
+        (CL && CL.enabled() ? '<div class="ask-coach"><button type="button" class="btn ghost sm" style="background:var(--track-ink);color:var(--track)" data-askcoach="' + esc('Bagaimana sebaiknya saya menjalankan sesi hari ini (' + d.title + ')?') + '">Tanya Coach AI tentang sesi ini</button></div>' : '');
     }
 
     // readiness hasil
@@ -817,7 +819,7 @@
       var m = await pullAndMerge();
       if (m.source === 'remote') accountMsg = { text: text + ' Data dari akun Anda dimuat.' };
       else if (m.source === 'merged') accountMsg = { text: text + ' Data perangkat ini digabung dengan akun.' };
-      else accountMsg = { text: text + ' Data perangkat ini disimpan ke akun.' };
+      else accountMsg = { text: text + (state.sample ? ' Akun Anda masih kosong: isi profil dan rencana untuk mulai.' : ' Data perangkat ini disimpan ke akun.') };
     } catch (err) {
       accountMsg = { text: text + ' Tapi data belum tersinkron: ' + err.message, err: true };
     }
@@ -832,7 +834,8 @@
     clearTimeout(pushTimer);
     if (cloudStatus === 'saving' || cloudStatus === 'pending') { try { await CL.push(state); } catch (e) { /* tetap keluar */ } }
     await CL.signOut();
-    try { localStorage.removeItem(KEY); localStorage.removeItem('lintasan.strava'); } catch (e) { /* abaikan */ }
+    try { localStorage.removeItem(KEY); localStorage.removeItem('lintasan.strava'); localStorage.removeItem(CHAT_KEY); } catch (e) { /* abaikan */ }
+    chat = { turns: [] }; chatQuota = null;
     state = sampleState();
     cloudStatus = 'off'; cloudAt = null;
     accountMode = 'signin'; accountMsg = { text: 'Anda sudah keluar. Data di perangkat ini dihapus; data Anda aman di akun.' };
@@ -1021,6 +1024,200 @@
     renderAll();
   }
 
+  // ---------- COACH AI ----------
+  var CHAT_KEY = 'lintasan.coach';
+  var chat = loadChat();
+  var chatBusy = false;
+  var chatQuota = null;
+
+  function loadChat() {
+    try { var c = JSON.parse(localStorage.getItem(CHAT_KEY)); if (c && Array.isArray(c.turns)) return c; } catch (e) { /* abaikan */ }
+    return { turns: [] };
+  }
+  function saveChat() {
+    try { localStorage.setItem(CHAT_KEY, JSON.stringify({ turns: chat.turns.slice(-40) })); } catch (e) { /* abaikan */ }
+  }
+
+  /** Ringkasan data pelari untuk coach (JSON ringkas, tanpa data akun). */
+  function buildCoachContext() {
+    var p = state.profile || {};
+    var vd = profileVdot(p);
+    var pc = vd ? S.trainingPaces(vd) : null;
+    var fp = function (x) { return S.fmtPace(x) + '/km'; };
+    var ctx = { tanggal_hari_ini: TODAY + ' (' + DAYS_LONG[new Date(TODAY + 'T12:00:00').getDay()] + ')' };
+    if (state.profile) {
+      var hrMax = p.max || (p.age ? S.hrMaxTanaka(p.age) : null);
+      ctx.profil = {
+        usia: p.age || null, hr_istirahat: p.rest || null, hr_max: hrMax, hr_max_sumber: p.max ? 'terukur' : 'rumus Tanaka',
+        vdot: vd ? Math.round(vd * 10) / 10 : null,
+        lomba_acuan: p.vdotOverride ? 'VDOT dari lomba/time trial di log' : (p.dist && p.time ? S.DISTANCES[p.dist].label + ' ' + p.time : null),
+        pace: pc ? { E: fp(pc.E.fast) + '–' + fp(pc.E.slow), M: fp(pc.M.pace), T: fp(pc.T.pace), I: fp(pc.I.pace), R: fp(pc.R.pace) } : null
+      };
+    }
+    if (state.plan) {
+      var o = state.plan.opts;
+      ctx.rencana = {
+        target: P.GOALS[o.goal].label, tanggal_lomba: o.raceDate || null, jumlah_minggu: state.plan.weeks.length,
+        hari_lari: P.planRunDays(o).map(function (d) { return DAY_FULL[d]; }), hari_long_run: DAY_FULL[o.longDay], level: o.level
+      };
+      var hit = viewDay(TODAY);
+      if (hit) {
+        var w = hit.week;
+        ctx.minggu_ini = {
+          minggu_ke: w.index, fase: PHASE_LABEL[w.phase], minggu_ringan: !!w.cutback, target_km: w.targetKm,
+          sesi: w.days.map(function (d) {
+            var x = { tanggal: d.date, hari: DAY_FULL[d.dow], sesi: d.title, km: d.km || 0, status: d.status || null };
+            if (d.type !== 'R' && d.desc && (!d.status || d.status === 'pending')) x.instruksi = d.desc;
+            if (d.log) x.tercatat = { km: d.log.km, menit: Math.round(d.log.minutes), rpe: d.log.rpe };
+            return x;
+          }),
+          penyesuaian: w.notes || []
+        };
+        var next = state.plan.weeks[hit.wi + 1];
+        if (next) ctx.minggu_depan = { minggu_ke: next.index, fase: PHASE_LABEL[next.phase], target_km: next.targetKm };
+      }
+      var rv = latestReview();
+      if (rv) ctx.review_terakhir = { minggu: rv.week, keputusan: DECISION[rv.decision][1], kepatuhan_persen: Math.round(rv.compliance * 100), km: Math.round(rv.doneKm * 10) / 10, alasan: rv.reasons };
+    }
+    var a = C.analyze(state.logs, new Date());
+    if (a.metrics) {
+      var m = a.metrics;
+      ctx.beban = {
+        km_7_hari: Math.round(m.km7 * 10) / 10, km_7_hari_sebelumnya: Math.round(m.kmPrev * 10) / 10, beban_7_hari_AU: Math.round(m.load7),
+        rasio_akut_kronis: m.acwr === null ? null : Math.round(m.acwr * 100) / 100, monotony: isFinite(m.monotony) ? Math.round(m.monotony * 100) / 100 : null,
+        hari_istirahat_7_hari: m.restDays,
+        distribusi_intensitas_28_hari: m.dist ? { rendah: Math.round(m.dist.easy * 100) + '%', sedang: Math.round(m.dist.moderate * 100) + '%', tinggi: Math.round(m.dist.hard * 100) + '%' } : null
+      };
+      ctx.peringatan_coach = a.insights.map(function (i) { return i.title; });
+    }
+    var r = state.readiness[TODAY];
+    if (r) {
+      var rd = C.readiness(r);
+      ctx.kesiapan_hari_ini = { skor: rd.score, level: rd.level, tidur_jam: r.sleepH, nyeri: r.pain, gejala_sakit: r.illness, hr_istirahat_vs_biasa: r.rhrDelta, catatan: rd.flags };
+    }
+    var from = S.dayKey(S.addDays(new Date(), -21));
+    ctx.log_21_hari = state.logs.filter(function (l) { return l.date >= from; })
+      .sort(function (x, y) { return x.date < y.date ? -1 : 1; }).slice(-40)
+      .map(function (l) {
+        return { tanggal: l.date, jenis: TYPE_LABEL[l.type] || l.type, km: Math.round(l.km * 10) / 10, menit: Math.round(l.minutes),
+          pace: l.km > 0 ? S.fmtPace(l.minutes * 60 / l.km) + '/km' : null, rpe: l.rpe, rpe_ditaksir: !!l.rpeEst, hr: l.hr || null,
+          catatan: l.notes ? String(l.notes).slice(0, 80) : undefined };
+      });
+    if (state.sample) ctx.catatan = 'Ini DATA CONTOH aplikasi, bukan data pelari sungguhan.';
+    return JSON.stringify(ctx);
+  }
+
+  /** Markdown sederhana → HTML aman (escape dulu, lalu tebal, daftar, paragraf). */
+  function mdToHtml(md) {
+    var lines = esc(md).split(/\n/);
+    var out = [], list = null;
+    function close() { if (list) { out.push('</' + list + '>'); list = null; } }
+    lines.forEach(function (raw) {
+      var line = raw.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<i>$2</i>');
+      var ul = /^\s*[-*•]\s+(.*)$/.exec(line), ol = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+      if (ul || ol) {
+        var t = ul ? 'ul' : 'ol';
+        if (list !== t) { close(); out.push('<' + t + '>'); list = t; }
+        out.push('<li>' + (ul || ol)[1] + '</li>');
+      } else if (!line.trim()) {
+        close();
+      } else {
+        close();
+        out.push('<p>' + line.replace(/^#{1,6}\s*/, '') + '</p>');
+      }
+    });
+    close();
+    return out.join('');
+  }
+
+  function coachSuggestions() {
+    var s = [];
+    var hit = state.plan && viewDay(TODAY);
+    if (hit && hit.day && hit.day.type !== 'R') s.push('Apa tujuan sesi ' + hit.day.title + ' hari ini dan bagaimana menjalankannya?');
+    s.push('Bagaimana latihan saya 3 minggu terakhir? Apa yang perlu diperbaiki?');
+    s.push('Kaki saya pegal setelah sesi kemarin. Sebaiknya bagaimana hari ini?');
+    if (state.plan) s.push('Apakah target ' + P.GOALS[state.plan.opts.goal].label + ' saya realistis dengan data sekarang?');
+    s.push('Apa yang sebaiknya saya makan & minum untuk long run di cuaca panas?');
+    return s.slice(0, 4);
+  }
+
+  function renderCoach() {
+    var logEl = $('chat-log');
+    if (!logEl) return;
+    var u = CL && CL.user();
+    var enabled = CL && CL.enabled();
+    var html = '';
+    if (!enabled) {
+      html = '<div class="msg intro"><b>Coach AI belum aktif di situs ini.</b><p>Fitur ini membutuhkan akun Lintasan (Supabase) yang terkonfigurasi.</p></div>';
+    } else if (!u) {
+      html = '<div class="msg intro"><b>Masuk untuk mengobrol dengan Coach AI.</b><p>Coach memakai data latihan di akun Anda agar sarannya personal.</p><p><button type="button" class="btn sm" data-go="account">Masuk / buat akun</button></p></div>';
+    } else if (!chat.turns.length) {
+      html = '<div class="msg intro"><span class="who">Coach Lintasan</span><p>Halo! Saya sudah melihat profil, jadwal minggu ini, dan log latihan Anda. Mau bahas apa? Pilih salah satu pertanyaan di bawah atau tulis sendiri.</p></div>';
+    }
+    html += chat.turns.map(function (t) {
+      return t.role === 'user'
+        ? '<div class="msg user">' + esc(t.content).replace(/\n/g, '<br>') + '</div>'
+        : '<div class="msg coach"><span class="who">Coach Lintasan</span>' + mdToHtml(t.content) + '</div>';
+    }).join('');
+    if (chatBusy) html += '<div class="msg coach"><span class="who">Coach Lintasan</span><span class="typing" aria-label="Coach sedang menulis"><i></i><i></i><i></i></span></div>';
+    if (chat.error) html += '<div class="msg err" role="alert">' + esc(chat.error) + '</div>';
+    logEl.innerHTML = html;
+    logEl.scrollTop = logEl.scrollHeight;
+
+    var can = enabled && !!u && !chatBusy;
+    $('chat-input').disabled = !enabled || !u;
+    $('chat-send').disabled = !can;
+    $('chat-send').textContent = chatBusy ? 'Menunggu…' : 'Kirim';
+    $('chat-suggest').innerHTML = can && chat.turns.length < 2
+      ? coachSuggestions().map(function (q) { return '<button type="button" class="chip" data-ask="' + esc(q) + '">' + esc(q) + '</button>'; }).join('')
+      : '';
+    $('chat-quota').textContent = chatQuota !== null ? 'Sisa ' + chatQuota + ' pesan hari ini' : '';
+    $('chat-clear').hidden = !chat.turns.length;
+
+    var sees = [];
+    sees.push(state.profile ? 'Profil, VDOT & pace latihan' : 'Profil: belum diisi');
+    sees.push(state.plan ? 'Rencana ' + P.GOALS[state.plan.opts.goal].label + ' & jadwal minggu ini (setelah penyesuaian)' : 'Rencana: belum dibuat');
+    var n = state.logs.filter(function (l) { return l.date >= S.dayKey(S.addDays(new Date(), -21)); }).length;
+    sees.push(n + ' sesi lari 21 hari terakhir');
+    sees.push(state.readiness[TODAY] ? 'Cek kesiapan pagi ini' : 'Cek kesiapan hari ini: belum diisi');
+    if (latestReview()) sees.push('Review mingguan terakhir');
+    $('coach-sees').innerHTML = sees.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('');
+  }
+
+  async function sendCoach(text) {
+    text = String(text || '').trim();
+    if (!text || chatBusy) return;
+    chat.error = null;
+    chat.turns.push({ role: 'user', content: text });
+    chatBusy = true;
+    $('chat-input').value = '';
+    renderCoach();
+    // kirim maks 12 giliran terakhir, harus diawali pertanyaan pelari
+    var turns = chat.turns.slice(-12);
+    while (turns.length && turns[0].role !== 'user') turns.shift();
+    try {
+      var res = await CL.askCoach(turns.map(function (t) { return { role: t.role, content: t.content }; }), buildCoachContext());
+      chat.turns.push({ role: 'assistant', content: res.reply + (res.truncated ? '\n\n_(Jawaban terpotong. Minta coach melanjutkan.)_' : '') });
+      if (typeof res.remaining === 'number') chatQuota = res.remaining;
+    } catch (err) {
+      chat.turns.pop(); // pertanyaan gagal tidak disimpan; kembalikan ke kotak input
+      $('chat-input').value = text;
+      chat.error = err.message;
+      if (typeof err.remaining === 'number') chatQuota = err.remaining;
+    }
+    chatBusy = false;
+    saveChat();
+    renderCoach();
+    $('chat-input').focus();
+  }
+
+  function askCoachAbout(question) {
+    show('coach');
+    renderCoach();
+    var input = $('chat-input');
+    if (!input.disabled) { input.value = question; input.focus(); }
+  }
+
   // ---------- PUSTAKA ----------
   function topicCard(t, hit) {
     var ev = { Kuat: 'green', Sedang: 'blue', Praktik: 'amber' }[t.evidence];
@@ -1093,6 +1290,7 @@
     renderSaveState();
     renderAccount();
     renderToday();
+    renderCoach();
     renderPlan();
     renderLog();
     renderProfile();
@@ -1205,6 +1403,13 @@
     drop.addEventListener('drop', function (e) { e.preventDefault(); onImportFiles(e.dataTransfer.files); });
 
     $('account-btn').addEventListener('click', function () { show('account'); });
+    $('chat-form').addEventListener('submit', function (e) { e.preventDefault(); sendCoach($('chat-input').value); });
+    $('chat-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendCoach($('chat-input').value); }
+    });
+    $('chat-suggest').addEventListener('click', function (e) { var b = e.target.closest('[data-ask]'); if (b) sendCoach(b.dataset.ask); });
+    $('chat-clear').addEventListener('click', function () { chat = { turns: [] }; saveChat(); renderCoach(); });
+    document.addEventListener('click', function (e) { var b = e.target.closest('[data-askcoach]'); if (b) askCoachAbout(b.dataset.askcoach); });
     $('sample-login').addEventListener('click', function () { accountMode = 'signin'; show('account'); });
     window.addEventListener('online', function () { if (cloudStatus === 'pending') pushNow(); });
 

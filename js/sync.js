@@ -156,7 +156,27 @@
     if (r.error) throw new Error(msg(r.error));
   }
 
+  /**
+   * Tanya Coach AI (Edge Function coach-chat). Token login dikirim otomatis oleh supabase-js.
+   * turns: [{role:'user'|'assistant', content}], context: string (JSON ringkas data pelari).
+   */
+  async function askCoach(turns, context) {
+    if (!client || !user) throw new Error('Masuk ke akun untuk memakai Coach AI.');
+    var r = await client.functions.invoke('coach-chat', { body: { messages: turns, context: context } });
+    if (r.error) {
+      var detail = null;
+      try { detail = r.error.context && typeof r.error.context.json === 'function' ? await r.error.context.json() : null; } catch (e) { /* abaikan */ }
+      var m = detail && detail.error ? detail.error : msg(r.error);
+      if (/Failed to send a request|FunctionsFetchError/i.test(m)) m = 'Tidak bisa menghubungi Coach AI. Periksa koneksi internet.';
+      var err = new Error(m);
+      err.remaining = detail && typeof detail.remaining === 'number' ? detail.remaining : null;
+      throw err;
+    }
+    return r.data;
+  }
+
   root.Cloud = {
+    askCoach: askCoach,
     merge: merge,
     isEmpty: isEmpty,
     enabled: enabled,
