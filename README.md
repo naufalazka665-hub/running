@@ -2,6 +2,10 @@
 
 Website statis (HTML/CSS/JS murni, tanpa build dan tanpa server) untuk **merencanakan latihan lari** dan berfungsi sebagai **coach harian**. Semua saran diturunkan dari literatur sport science dan bisa ditelusuri ke referensinya.
 
+**Online:** <https://naufalazka665-hub.github.io/running/>
+
+Situs disajikan GitHub Pages dari branch `gh-pages`. Setelah mengubah `main`, perbarui situs dengan `git push origin main:gh-pages`.
+
 ## Fitur
 
 | Bagian | Isi | Dasar ilmiah |
@@ -101,7 +105,7 @@ npm start            # http://localhost:8080 (perlu untuk sinkron Strava lokal)
 npm test             # 56 unit test (rumus VDOT vs tabel Daniels, generator rencana, hari lari pilihan & hari lari aktual, penyesuaian jadwal dari log, rencana adaptif, coach, importer, sinkron akun, pustaka)
 ```
 
-Bisa di-deploy apa adanya ke GitHub Pages (Settings → Pages → branch, folder root).
+Situs statis tanpa build: GitHub Pages menyajikan branch `gh-pages` apa adanya (lihat alamat di atas).
 
 Data disimpan di `localStorage` browser; gunakan Ekspor/Impor JSON di tab Profil untuk cadangan. Saat pertama dibuka, aplikasi memuat **data contoh** yang bisa dihapus dengan satu klik.
 
